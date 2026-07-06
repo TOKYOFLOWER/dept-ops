@@ -1,0 +1,156 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildSandbox, loadGasFiles } from './sandbox.mjs';
+
+const SECRET = 'unit-test-hmac-secret';
+
+function ctx(sheetsSeed) {
+  const { sandbox, sheetsData } = buildSandbox({ HMAC_SECRET: SECRET });
+  loadGasFiles(sandbox, ['config.js', 'webapi.js']);
+  sheetsData['実行ログ'] = [['timestamp', 'level', 'message']];
+  Object.assign(sheetsData, sheetsSeed || {});
+  return { sandbox, sheetsData };
+}
+
+function sign(sandbox, id, action, exp) {
+  return sandbox.hmacSignWithSecret_(id + ':' + action + ':' + exp, SECRET);
+}
+
+// ---------- D1: 不正な署名 ----------
+test('D1: HMAC署名が不正な場合は署名エラー(403)相当のページを返す', () => {
+  const { sandbox } = ctx();
+  const check = sandbox.verifyApprovalLink_('id1', 'approve', String(Date.now() + 100000), 'bogus-signature', SECRET);
+  assert.equal(check.ok, false);
+  assert.equal(check.title, '署名エラー（403）');
+});
+
+// ---------- D2: 期限切れ ----------
+test('D2: 発行から72時間相当を過ぎたリンクは期限切れになり状態は変更されない', () => {
+  const { sandbox, sheetsData } = ctx({
+    '承認キュー': [
+      ['id', 'created', 'dept_id', '提案内容', 'status', 'decided_at'],
+      ['exp-1', new Date(), 'market', '{"title":"t"}', 'pending', ''],
+    ],
+  });
+  const pastExp = String(Date.now() - 1000); // 既に期限切れ
+  const sig = sign(sandbox, 'exp-1', 'approve', pastExp);
+  const res = sandbox.doGet({ parameter: { action: 'approve', id: 'exp-1', exp: pastExp, sig } });
+  assert.match(res._html, /期限切れ/);
+  assert.equal(sheetsData['承認キュー'][1][4], 'pending'); // 状態は変更されない
+  assert.equal(sheetsData['承認キュー'][1][5], '');
+});
+
+// ---------- D3 + D4: 承認・二重承認防止・decided_at記録 ----------
+test('D3/D4: pendingの提案を承認するとapproved+decided_atが記録され、再アクセスでは上書きされない', () => {
+  const { sandbox, sheetsData } = ctx({
+    '承認キュー': [
+      ['id', 'created', 'dept_id', '提案内容', 'status', 'decided_at'],
+      ['app-1', new Date(), 'market', '{"title":"t"}', 'pending', ''],
+    ],
+  });
+  const futureExp = String(Date.now() + 72 * 3600000);
+  const sig = sign(sandbox, 'app-1', 'approve', futureExp);
+
+  const res1 = sandbox.doGet({ parameter: { action: 'approve', id: 'app-1', exp: futureExp, sig } });
+  assert.match(res1._html, /承認しました/);
+  assert.equal(sheetsData['承認キュー'][1][4], 'approved');
+  const decidedAt1 = sheetsData['承認キュー'][1][5];
+  assert.equal(Object.prototype.toString.call(decidedAt1), '[object Date]');
+
+  // 同じリンクに再アクセス
+  const res2 = sandbox.doGet({ parameter: { action: 'approve', id: 'app-1', exp: futureExp, sig } });
+  assert.match(res2._html, /処理済み/);
+  assert.equal(sheetsData['承認キュー'][1][4], 'approved'); // 上書きされない
+  assert.equal(sheetsData['承認キュー'][1][5], decidedAt1);
+});
+
+test('却下(reject)でrejected状態になる', () => {
+  const { sandbox, sheetsData } = ctx({
+    '承認キュー': [
+      ['id', 'created', 'dept_id', '提案内容', 'status', 'decided_at'],
+      ['rej-1', new Date(), 'seo', '{"title":"t"}', 'pending', ''],
+    ],
+  });
+  const futureExp = String(Date.now() + 1000000);
+  const sig = sign(sandbox, 'rej-1', 'reject', futureExp);
+  const res = sandbox.doGet({ parameter: { action: 'reject', id: 'rej-1', exp: futureExp, sig } });
+  assert.match(res._html, /却下しました/);
+  assert.equal(sheetsData['承認キュー'][1][4], 'rejected');
+});
+
+test('存在しないIDへのアクセスは「見つかりません」', () => {
+  const { sandbox } = ctx({
+    '承認キュー': [['id', 'created', 'dept_id', '提案内容', 'status', 'decided_at']],
+  });
+  const futureExp = String(Date.now() + 1000000);
+  const sig = sign(sandbox, 'nope', 'approve', futureExp);
+  const res = sandbox.doGet({ parameter: { action: 'approve', id: 'nope', exp: futureExp, sig } });
+  assert.match(res._html, /見つかりません/);
+});
+
+// ---------- XSSリグレッション: idをエスケープしてHTMLに埋め込む ----------
+test('見つからないIDにHTMLタグを含めても実行可能なタグとして出力されない', () => {
+  const { sandbox } = ctx({
+    '承認キュー': [['id', 'created', 'dept_id', '提案内容', 'status', 'decided_at']],
+  });
+  const maliciousId = '<script>alert(1)</script>';
+  const futureExp = String(Date.now() + 1000000);
+  const sig = sign(sandbox, maliciousId, 'approve', futureExp);
+  const res = sandbox.doGet({ parameter: { action: 'approve', id: maliciousId, exp: futureExp, sig } });
+  assert.doesNotMatch(res._html, /<script>alert\(1\)<\/script>/);
+  assert.match(res._html, /&lt;script&gt;/);
+});
+
+// ---------- E1: doGet(action=data) の集計ロジック ----------
+test('E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_ が正しく集計される', () => {
+  const { sandbox } = ctx();
+  const depts = sandbox.mapDeptRows_([
+    ['market', 'マーケティング部', true, '', 'prompt'],
+    ['seo', 'SEO室', 'TRUE', '', 'prompt'],
+    ['items', '商品管理部', false, '', 'prompt'],
+  ]);
+  assert.equal(depts.length, 3);
+  assert.equal(depts[2].enabled, false);
+
+  const history = sandbox.mapHistoryRows_([
+    [new Date('2026-07-01'), 'market', 'green', 'H1', 'R1', '[]'],
+    [new Date('2026-07-02'), 'market', 'yellow', 'H2', 'R2', '[{"title":"p"}]'],
+    [new Date('2026-07-02'), 'seo', 'green', 'H3', 'R3', '[]'],
+  ]);
+  assert.equal(history.length, 3);
+  assert.equal(history[0].dept_id, 'seo'); // 新しい順(reverse)で先頭
+
+  const latest = sandbox.pickLatestByDept_(history);
+  assert.equal(latest.market.headline, 'H2'); // marketの最新はH2（2026-07-02分）
+  assert.equal(latest.seo.headline, 'H3');
+
+  const approvals = sandbox.mapApprovalRows_([
+    ['a1', new Date(), 'market', '{"title":"t1"}', 'pending', ''],
+    ['a2', new Date(), 'seo', '{"title":"t2"}', 'approved', new Date()],
+  ]);
+  assert.equal(approvals.length, 2);
+  assert.equal(approvals[0].id, 'a2'); // reverse順
+  assert.equal(approvals[0].proposal.title, 't2');
+});
+
+test('buildDashboardData_: 3シートを統合したJSONを返す（E1の統合確認）', () => {
+  const { sandbox } = ctx({
+    '部署定義': [
+      ['id', '部署名', '有効', 'モデル', '役割プロンプト'],
+      ['market', 'マーケティング部', true, '', 'p'],
+    ],
+    '報告履歴': [
+      ['timestamp', 'dept_id', 'status', 'headline', 'report', 'proposals_json'],
+      [new Date(), 'market', 'green', 'H', 'R', '[]'],
+    ],
+    '承認キュー': [
+      ['id', 'created', 'dept_id', '提案内容', 'status', 'decided_at'],
+      ['a1', new Date(), 'market', '{"title":"t"}', 'pending', ''],
+    ],
+  });
+  const data = sandbox.buildDashboardData_();
+  assert.equal(data.depts.length, 1);
+  assert.equal(data.latest.market.headline, 'H');
+  assert.equal(data.approvals.length, 1);
+  assert.ok(data.generated_at);
+});
