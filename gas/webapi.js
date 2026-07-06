@@ -11,29 +11,50 @@ function doGet(e) {
     return htmlOut_('DEPT-OPS', 'action を指定してください。');
   } catch (err) {
     log_('ERROR', 'doGet: ' + err.message);
-    return htmlOut_('エラー', err.message);
+    return htmlOut_('エラー', escHtml_(err.message));
   }
 }
 
 function buildDashboardData_() {
-  const depts = sheet_(CONF.SHEET.DEPTS).getDataRange().getValues().slice(1)
-    .filter(function (r) { return r[0]; })
-    .map(function (r) { return { id: r[0], name: r[1], enabled: r[2] === true || r[2] === 'TRUE' }; });
-
+  const deptRows = sheet_(CONF.SHEET.DEPTS).getDataRange().getValues().slice(1);
   const repRows = sheet_(CONF.SHEET.REPORTS).getDataRange().getValues().slice(1);
-  const history = repRows.slice(-30).reverse().map(function (r) {
+  const apprRows = sheet_(CONF.SHEET.APPROVALS).getDataRange().getValues().slice(1);
+
+  const depts = mapDeptRows_(deptRows);
+  const history = mapHistoryRows_(repRows);
+  const latest = pickLatestByDept_(history);
+  const approvals = mapApprovalRows_(apprRows);
+
+  return { generated_at: new Date().toISOString(), depts: depts, latest: latest, history: history, approvals: approvals };
+}
+
+/** 部署定義シート行 → ダッシュボード用配列（純粋関数。モックデータでテスト可能） */
+function mapDeptRows_(rows) {
+  return (rows || []).filter(function (r) { return r[0]; })
+    .map(function (r) { return { id: r[0], name: r[1], enabled: r[2] === true || r[2] === 'TRUE' }; });
+}
+
+/** 報告履歴シート行 → 直近30件の履歴配列（純粋関数。モックデータでテスト可能） */
+function mapHistoryRows_(rows) {
+  return (rows || []).slice(-30).reverse().map(function (r) {
     return {
       timestamp: r[0] instanceof Date ? r[0].toISOString() : String(r[0]),
       dept_id: r[1], status: r[2], headline: r[3], report: r[4],
       proposals: safeParse_(r[5], []),
     };
   });
+}
 
+/** 履歴配列から部署ごとの最新1件を抽出（純粋関数。モックデータでテスト可能） */
+function pickLatestByDept_(history) {
   const latest = {};
-  history.forEach(function (h) { if (!latest[h.dept_id]) latest[h.dept_id] = h; });
+  (history || []).forEach(function (h) { if (!latest[h.dept_id]) latest[h.dept_id] = h; });
+  return latest;
+}
 
-  const apprRows = sheet_(CONF.SHEET.APPROVALS).getDataRange().getValues().slice(1);
-  const approvals = apprRows.slice(-50).reverse().map(function (r) {
+/** 承認キューシート行 → 直近50件の配列（純粋関数。モックデータでテスト可能） */
+function mapApprovalRows_(rows) {
+  return (rows || []).slice(-50).reverse().map(function (r) {
     return {
       id: r[0],
       created: r[1] instanceof Date ? r[1].toISOString() : String(r[1]),
@@ -42,36 +63,60 @@ function buildDashboardData_() {
       decided_at: r[5] ? (r[5] instanceof Date ? r[5].toISOString() : String(r[5])) : null,
     };
   });
-
-  return { generated_at: new Date().toISOString(), depts: depts, latest: latest, history: history, approvals: approvals };
 }
 
 function handleDecision_(p) {
   const action = p.action, id = p.id, exp = p.exp, sig = p.sig;
-  if (!id || !exp || !sig) return htmlOut_('不正なリンク', 'パラメータが不足しています。');
-  if (hmacSign_(id + ':' + action + ':' + exp) !== sig) {
-    return htmlOut_('署名エラー（403）', 'このリンクは無効です。');
-  }
-  if (Date.now() > Number(exp)) {
-    return htmlOut_('期限切れ', 'このリンクの有効期限（' + CONF.APPROVAL_TTL_HOURS + '時間）が過ぎています。状態は変更されていません。');
-  }
+  const check = verifyApprovalLink_(id, action, exp, sig, prop_('HMAC_SECRET'));
+  if (!check.ok) return htmlOut_(check.title, check.body);
 
   const sh = sheet_(CONF.SHEET.APPROVALS);
   const values = sh.getDataRange().getValues();
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][0]) === String(id)) {
-      if (values[i][4] !== 'pending') {
-        return htmlOut_('処理済み', 'この提案はすでに「' + values[i][4] + '」です。状態は変更されていません。');
+  const dataRows = values.slice(1); // ヘッダー除く
+  const outcome = decideApprovalRow_(dataRows, id, action);
+
+  if (outcome.notFound) return htmlOut_('見つかりません', '提案ID ' + escHtml_(id) + ' は存在しません。');
+  if (outcome.alreadyDecided) {
+    return htmlOut_('処理済み', 'この提案はすでに「' + escHtml_(outcome.status) + '」です。状態は変更されていません。');
+  }
+
+  const sheetRow = outcome.rowIndex + 2; // ヘッダー分+1、1始まり分+1
+  sh.getRange(sheetRow, 5).setValue(outcome.newStatus);
+  sh.getRange(sheetRow, 6).setValue(new Date());
+  log_('INFO', '承認キュー ' + id + ' → ' + outcome.newStatus);
+  return htmlOut_(outcome.newStatus === 'approved' ? '✅ 承認しました' : '❌ 却下しました',
+    '提案ID: ' + escHtml_(id) + '。第2弾で実行部を接続すると、承認済み提案は自動実行キューへ入ります。');
+}
+
+/**
+ * 承認リンクの署名・期限を検証（純粋関数。モックデータでテスト可能）
+ * now を渡すとその時刻で判定（テスト用）。省略時は Date.now()。
+ */
+function verifyApprovalLink_(id, action, exp, sig, secret, now) {
+  if (!id || !exp || !sig) return { ok: false, title: '不正なリンク', body: 'パラメータが不足しています。' };
+  if (hmacSignWithSecret_(id + ':' + action + ':' + exp, secret) !== sig) {
+    return { ok: false, title: '署名エラー（403）', body: 'このリンクは無効です。' };
+  }
+  if ((now != null ? now : Date.now()) > Number(exp)) {
+    return { ok: false, title: '期限切れ', body: 'このリンクの有効期限（' + CONF.APPROVAL_TTL_HOURS + '時間）が過ぎています。状態は変更されていません。' };
+  }
+  return { ok: true };
+}
+
+/**
+ * 承認キューの行データ（ヘッダー除く配列）から対象idの状態遷移を決定（純粋関数。モックデータでテスト可能）
+ * rows の列: [id, created, dept_id, 提案内容, status, decided_at]
+ */
+function decideApprovalRow_(rows, id, action) {
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(id)) {
+      if (rows[i][4] !== 'pending') {
+        return { notFound: false, alreadyDecided: true, status: rows[i][4], rowIndex: i };
       }
-      const newStatus = action === 'approve' ? 'approved' : 'rejected';
-      sh.getRange(i + 1, 5).setValue(newStatus);
-      sh.getRange(i + 1, 6).setValue(new Date());
-      log_('INFO', '承認キュー ' + id + ' → ' + newStatus);
-      return htmlOut_(newStatus === 'approved' ? '✅ 承認しました' : '❌ 却下しました',
-        '提案ID: ' + id + '。第2弾で実行部を接続すると、承認済み提案は自動実行キューへ入ります。');
+      return { notFound: false, alreadyDecided: false, newStatus: action === 'approve' ? 'approved' : 'rejected', rowIndex: i };
     }
   }
-  return htmlOut_('見つかりません', '提案ID ' + id + ' は存在しません。');
+  return { notFound: true };
 }
 
 function safeParse_(s, fallback) {
@@ -88,4 +133,11 @@ function htmlOut_(title, body) {
     '<body style="font-family:sans-serif;max-width:480px;margin:40px auto;padding:0 16px">' +
     '<h2>' + title + '</h2><p>' + body + '</p></body>';
   return HtmlService.createHtmlOutput(html).setTitle('DEPT-OPS');
+}
+
+/** HTML特殊文字のエスケープ（ユーザー入力をhtmlOut_へ渡す前に使用） */
+function escHtml_(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
 }

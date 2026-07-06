@@ -18,20 +18,7 @@ function collectMarket_() {
   try {
     const data = jsonFetch_(url, { headers: { Authorization: rmsAuthHeader_() } });
     const coupons = (data.couponList || data.coupons || []);
-    if (!coupons.length) {
-      lines.push('有効なクーポンが1件もありません。');
-    } else {
-      const now = new Date();
-      coupons.forEach(function (c) {
-        const cp = c.coupon || c;
-        const end = cp.couponEndDate ? new Date(cp.couponEndDate) : null;
-        const daysLeft = end ? Math.ceil((end - now) / 86400000) : null;
-        lines.push('- ' + (cp.couponName || cp.couponCode) +
-          ' / 割引: ' + (cp.discountFactor || cp.discountType || '不明') +
-          ' / 残り' + (daysLeft === null ? '?' : daysLeft) + '日' +
-          ' / 利用数: ' + (cp.usedCount != null ? cp.usedCount : '不明'));
-      });
-    }
+    lines = lines.concat(summarizeCoupons_(coupons, new Date()));
   } catch (e) {
     lines.push('（CouponAPI取得エラー: ' + e.message + '）');
   }
@@ -39,6 +26,20 @@ function collectMarket_() {
   lines.push('# 今日の日付: ' + Utilities.formatDate(new Date(), 'JST', 'yyyy-MM-dd (E)'));
   lines.push('楽天イベントのカレンダーはあなたの知識で補完し、直近イベントへの対応状況を推定してください。');
   return lines.join('\n');
+}
+
+/** クーポン一覧 → 報告用テキスト行（純粋関数。モックデータでテスト可能） */
+function summarizeCoupons_(coupons, now) {
+  if (!coupons || !coupons.length) return ['有効なクーポンが1件もありません。'];
+  return coupons.map(function (c) {
+    const cp = c.coupon || c;
+    const end = cp.couponEndDate ? new Date(cp.couponEndDate) : null;
+    const daysLeft = end ? Math.ceil((end - now) / 86400000) : null;
+    return '- ' + (cp.couponName || cp.couponCode) +
+      ' / 割引: ' + (cp.discountFactor || cp.discountType || '不明') +
+      ' / 残り' + (daysLeft === null ? '?' : daysLeft) + '日' +
+      ' / 利用数: ' + (cp.usedCount != null ? cp.usedCount : '不明');
+  });
 }
 
 // ---------- SEO室: Search Console ----------
@@ -71,19 +72,25 @@ function collectSeo_() {
   try {
     const cur = query(start7, end);
     const prev = query(prevStart, prevEnd);
-    const prevMap = {};
-    prev.forEach(function (r) { prevMap[r.keys[0]] = r; });
-    cur.forEach(function (r) {
-      const q = r.keys[0];
-      const p = prevMap[q];
-      lines.push('- 「' + q + '」 クリック' + r.clicks + '（前週' + (p ? p.clicks : 0) + '）' +
-        ' 表示' + r.impressions + ' CTR' + (r.ctr * 100).toFixed(1) + '% 順位' + r.position.toFixed(1));
-    });
-    if (!cur.length) lines.push('データなし（サイトURL設定を確認）');
+    lines = lines.concat(formatSeoComparison_(cur, prev));
   } catch (e) {
     lines.push('（GSC取得エラー: ' + e.message + '）');
   }
   return lines.join('\n');
+}
+
+/** 今週/前週の検索クエリ行を比較テキストに整形（純粋関数。モックデータでテスト可能） */
+function formatSeoComparison_(curRows, prevRows) {
+  const prevMap = {};
+  (prevRows || []).forEach(function (r) { prevMap[r.keys[0]] = r; });
+  const lines = (curRows || []).map(function (r) {
+    const q = r.keys[0];
+    const p = prevMap[q];
+    return '- 「' + q + '」 クリック' + r.clicks + '（前週' + (p ? p.clicks : 0) + '）' +
+      ' 表示' + r.impressions + ' CTR' + (r.ctr * 100).toFixed(1) + '% 順位' + r.position.toFixed(1);
+  });
+  if (!curRows || !curRows.length) lines.push('データなし（サイトURL設定を確認）');
+  return lines;
 }
 
 // ---------- 商品管理部: 全商品スキャン ----------
@@ -97,23 +104,7 @@ function collectItems_() {
     do {
       let url = CONF.RMS_BASE + '/es/2.0/items/search?hits=100' + (cursor ? '&cursorMark=' + encodeURIComponent(cursor) : '');
       const data = jsonFetch_(url, { headers: { Authorization: rmsAuthHeader_() } });
-      (data.results || []).forEach(function (r) {
-        const it = r.item || r;
-        stats.total++;
-        const inv = it.variants ? Object.keys(it.variants).some(function (k) {
-          return (it.variants[k].normalDeliveryQuantity || 0) > 0;
-        }) : true;
-        if (!inv) stats.noStock++;
-        const desc = ((it.productDescription && (it.productDescription.pc || it.productDescription.sp)) || '');
-        if (desc.length < 100) stats.shortDesc++;
-        if (!(it.images && it.images.length)) stats.noImage++;
-        if (it.hideItem) stats.hidden++;
-        RISK.forEach(function (w) {
-          if (desc.indexOf(w) >= 0 && stats.riskWords.length < 10) {
-            stats.riskWords.push(it.manageNumber + ':「' + w + '」');
-          }
-        });
-      });
+      aggregateItemStats_(data.results, stats, RISK);
       cursor = data.nextCursorMark && data.results && data.results.length ? data.nextCursorMark : null;
       pages++;
     } while (cursor && pages < 20); // 最大2000商品
@@ -125,4 +116,26 @@ function collectItems_() {
     lines.push('（ItemAPI取得エラー: ' + e.message + '）');
   }
   return lines.join('\n');
+}
+
+/** 商品ページ1件分の集計を stats に加算（純粋関数。モックデータでテスト可能） */
+function aggregateItemStats_(items, stats, RISK) {
+  (items || []).forEach(function (r) {
+    const it = r.item || r;
+    stats.total++;
+    const inv = it.variants ? Object.keys(it.variants).some(function (k) {
+      return (it.variants[k].normalDeliveryQuantity || 0) > 0;
+    }) : true;
+    if (!inv) stats.noStock++;
+    const desc = ((it.productDescription && (it.productDescription.pc || it.productDescription.sp)) || '');
+    if (desc.length < 100) stats.shortDesc++;
+    if (!(it.images && it.images.length)) stats.noImage++;
+    if (it.hideItem) stats.hidden++;
+    RISK.forEach(function (w) {
+      if (desc.indexOf(w) >= 0 && stats.riskWords.length < 10) {
+        stats.riskWords.push(it.manageNumber + ':「' + w + '」');
+      }
+    });
+  });
+  return stats;
 }

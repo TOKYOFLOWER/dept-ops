@@ -5,16 +5,8 @@
 // ---------- Chatwork: 朝会形式の一括報告 ----------
 function sendChatworkReport_(results) {
   const today = Utilities.formatDate(new Date(), 'JST', 'yyyy-MM-dd');
-  let body = '[info][title]🏢 朝の部署報告 ' + today + '[/title]';
-  results.forEach(function (r) {
-    const icon = r.result.status === 'green' ? '🟢' : '🟡';
-    body += icon + ' ' + r.deptName + '：' + r.result.headline + '\n' + r.result.report + '\n';
-    r.result.proposals.forEach(function (p) {
-      body += '　💡 ' + p.title + (p.needs_decision ? '（要承認→LINE WORKSへ送信済）' : '') + '\n';
-    });
-    body += '[hr]';
-  });
-  body += 'ダッシュボード: ' + (PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '(未設定)') + '[/info]';
+  const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '(未設定)';
+  const body = buildChatworkBody_(results, today, dashboardUrl);
 
   UrlFetchApp.fetch('https://api.chatwork.com/v2/rooms/' + prop_('CHATWORK_ROOM_ID') + '/messages', {
     method: 'post',
@@ -24,6 +16,36 @@ function sendChatworkReport_(results) {
   });
 }
 
+/** Chatwork本文組み立て（純粋関数。モックデータでテスト可能） */
+function buildChatworkBody_(results, todayStr, dashboardUrl) {
+  let body = '[info][title]🏢 朝の部署報告 ' + todayStr + '[/title]';
+  results.forEach(function (r) {
+    const icon = r.result.status === 'green' ? '🟢' : '🟡';
+    body += icon + ' ' + r.deptName + '：' + r.result.headline + '\n' + r.result.report + '\n';
+    r.result.proposals.forEach(function (p) {
+      body += '　💡 ' + p.title + (p.needs_decision ? '（要承認→LINE WORKSへ送信済）' : '') + '\n';
+    });
+    body += '[hr]';
+  });
+  body += 'ダッシュボード: ' + (dashboardUrl || '(未設定)') + '[/info]';
+  return body;
+}
+
+/**
+ * LINE WORKS JWT の header/claim 部分を組み立てる（純粋関数。モックデータでテスト可能）
+ * 署名はGAS実行時のみ可能（Utilities.computeRsaSha256Signature）なので含めない。
+ */
+function buildLwJwtHeaderClaim_(clientId, serviceAccount, nowEpochSeconds) {
+  const header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).replace(/=+$/, '');
+  const claim = Utilities.base64EncodeWebSafe(JSON.stringify({
+    iss: clientId,
+    sub: serviceAccount,
+    iat: nowEpochSeconds,
+    exp: nowEpochSeconds + 3600,
+  })).replace(/=+$/, '');
+  return { header: header, claim: claim, signingInput: header + '.' + claim };
+}
+
 // ---------- LINE WORKS: Service Account JWT ----------
 function lwAccessToken_() {
   const cache = CacheService.getScriptCache();
@@ -31,18 +53,12 @@ function lwAccessToken_() {
   if (cached) return cached;
 
   const now = Math.floor(Date.now() / 1000);
-  const header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).replace(/=+$/, '');
-  const claim = Utilities.base64EncodeWebSafe(JSON.stringify({
-    iss: prop_('LW_CLIENT_ID'),
-    sub: prop_('LW_SERVICE_ACCOUNT'),
-    iat: now,
-    exp: now + 3600,
-  })).replace(/=+$/, '');
+  const parts = buildLwJwtHeaderClaim_(prop_('LW_CLIENT_ID'), prop_('LW_SERVICE_ACCOUNT'), now);
   const key = prop_('LW_PRIVATE_KEY').replace(/\\n/g, '\n');
   const sig = Utilities.base64EncodeWebSafe(
-    Utilities.computeRsaSha256Signature(header + '.' + claim, key)
+    Utilities.computeRsaSha256Signature(parts.signingInput, key)
   ).replace(/=+$/, '');
-  const jwt = header + '.' + claim + '.' + sig;
+  const jwt = parts.signingInput + '.' + sig;
 
   const data = jsonFetch_('https://auth.worksmobile.com/oauth2/v2.0/token', {
     method: 'post',
