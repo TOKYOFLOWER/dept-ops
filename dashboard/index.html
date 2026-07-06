@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>DEPT-OPS｜朝の部署報告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@700;900&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1d2a22;          /* 深い葉の墨色 */
+    --paper:#f7f6f1;        /* 生成りの台紙 */
+    --card:#ffffff;
+    --leaf:#2e7d4f;         /* 鮮度の緑 */
+    --amber:#c47f17;        /* 要注意の琥珀 */
+    --line:#d8d5cb;
+    --sub:#6b7268;
+    --tag:#243c2e;          /* 木札の焦げ茶緑 */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"IBM Plex Sans JP",sans-serif;
+    background:var(--paper);color:var(--ink);
+    padding:20px 16px 64px;
+  }
+  header{max-width:960px;margin:0 auto 20px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h1{font-family:"Zen Old Mincho",serif;font-weight:900;font-size:1.5rem;letter-spacing:.08em}
+  h1 span{color:var(--leaf)}
+  #meta{font-size:.78rem;color:var(--sub)}
+  #pendingBadge{margin-left:auto;font-size:.8rem;font-weight:700;background:var(--amber);color:#fff;
+    border-radius:999px;padding:4px 12px;display:none}
+
+  main{max-width:960px;margin:0 auto;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:6px;
+    display:flex;overflow:hidden;box-shadow:0 1px 2px rgba(29,42,34,.06);
+  }
+  /* 木札：縦書きの部署名ラベル */
+  .tag{
+    writing-mode:vertical-rl;font-family:"Zen Old Mincho",serif;font-weight:700;
+    background:var(--tag);color:#f2efe6;padding:14px 8px;font-size:.95rem;
+    letter-spacing:.28em;display:flex;align-items:center;justify-content:center;flex:0 0 auto;
+  }
+  .card.yellow .tag{background:var(--amber)}
+  .body{padding:14px 16px;flex:1;min-width:0}
+  .status{font-size:.72rem;font-weight:700;letter-spacing:.1em;color:var(--leaf)}
+  .card.yellow .status{color:var(--amber)}
+  .headline{font-family:"Zen Old Mincho",serif;font-weight:700;font-size:1.05rem;margin:4px 0 8px;line-height:1.4}
+  .report{font-size:.85rem;line-height:1.7;color:#333b35;white-space:pre-wrap}
+  .proposals{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+  .proposal{font-size:.8rem;line-height:1.6;margin-bottom:6px}
+  .proposal b{color:var(--tag)}
+  .needs{font-size:.68rem;color:#fff;background:var(--amber);border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:1px}
+  .time{font-size:.7rem;color:var(--sub);margin-top:10px}
+  .histBtn{margin-top:8px;font-size:.75rem;background:none;border:1px solid var(--line);border-radius:4px;
+    padding:4px 10px;cursor:pointer;color:var(--sub);font-family:inherit}
+  .histBtn:focus-visible{outline:2px solid var(--leaf);outline-offset:2px}
+
+  section#historyArea{max-width:960px;margin:24px auto 0;display:none}
+  section#historyArea h2{font-family:"Zen Old Mincho",serif;font-size:1.05rem;margin-bottom:10px}
+  .histItem{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:8px;font-size:.82rem;line-height:1.7}
+  .histItem .d{font-size:.7rem;color:var(--sub)}
+
+  #stateBox{max-width:960px;margin:40px auto;text-align:center;color:var(--sub);font-size:.9rem}
+  #stateBox button{margin-top:12px;padding:8px 20px;border:1px solid var(--line);background:var(--card);
+    border-radius:6px;cursor:pointer;font-family:inherit}
+  @media (max-width:420px){ body{padding:14px 10px 48px} h1{font-size:1.25rem} }
+  @media (prefers-reduced-motion:no-preference){
+    .card{animation:rise .35s ease both}
+    @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>朝の部署報告<span>｜</span>DEPT-OPS</h1>
+  <div id="meta">読み込み中…</div>
+  <div id="pendingBadge"></div>
+</header>
+<main id="cards"></main>
+<section id="historyArea">
+  <h2 id="histTitle"></h2>
+  <div id="histList"></div>
+</section>
+<div id="stateBox" hidden></div>
+
+<script>
+/* GAS WebアプリのURLを設定（SETUP_手順.md 参照）。空ならモックデータで表示 */
+const GAS_URL = "";
+
+const MOCK = {
+  generated_at:new Date().toISOString(),
+  depts:[{id:"market",name:"マーケティング部",enabled:true},{id:"seo",name:"SEO室",enabled:true},{id:"items",name:"商品管理部",enabled:true}],
+  latest:{
+    market:{timestamp:new Date().toISOString(),dept_id:"market",status:"green",headline:"クーポン3本稼働中・異常なし",report:"送料無料クーポンの残り9日、利用数は堅調。マラソン対策は準備済み。（モック表示）",proposals:[{title:"母の日先行クーポン",detail:"4月中旬から早割10%を提案",needs_decision:true}]},
+    seo:{timestamp:new Date().toISOString(),dept_id:"seo",status:"yellow",headline:"「開店祝い 花」順位が前週比で下落",report:"クリック数が前週比-18%。前回提案の商品ページtitle修正は未実行の疑いあり。（モック表示）",proposals:[{title:"titleタグ修正の再提案",detail:"上位10商品のtitle刷新",needs_decision:false}]},
+    items:{timestamp:new Date().toISOString(),dept_id:"items",status:"green",headline:"全412商品スキャン・リスク語なし",report:"在庫ゼロ3件、説明文100字未満7件。薬機法リスク語の検出なし。（モック表示）",proposals:[]}
+  },
+  history:[],approvals:[{id:"m-1",status:"pending"}]
+};
+
+const $=s=>document.querySelector(s);
+let DATA=null;
+
+async function load(){
+  $("#stateBox").hidden=true;
+  try{
+    if(!GAS_URL){ DATA=MOCK; }
+    else{
+      const res=await fetch(GAS_URL+"?action=data");
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      DATA=await res.json();
+    }
+    render();
+  }catch(e){
+    $("#cards").innerHTML="";
+    const box=$("#stateBox");
+    box.hidden=false;
+    box.innerHTML="データを取得できませんでした（"+e.message+"）。<br>通信環境とGASデプロイを確認してください。<br><button onclick='load()'>再読み込み</button>";
+    $("#meta").textContent="取得エラー";
+  }
+}
+
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+function render(){
+  const d=DATA;
+  $("#meta").textContent="更新 "+new Date(d.generated_at).toLocaleString("ja-JP");
+  const pend=(d.approvals||[]).filter(a=>a.status==="pending").length;
+  const badge=$("#pendingBadge");
+  if(pend>0){badge.style.display="inline-block";badge.textContent="承認待ち "+pend+"件";}
+  else badge.style.display="none";
+
+  $("#cards").innerHTML=(d.depts||[]).filter(x=>x.enabled).map(dept=>{
+    const r=d.latest?.[dept.id];
+    if(!r) return cardShell(dept.name,"green","まだ報告がありません","初回の朝サイクル実行をお待ちください。","","",dept.id);
+    const props=(r.proposals||[]).map(p=>
+      `<div class="proposal"><b>💡 ${esc(p.title)}</b>${p.needs_decision?'<span class="needs">要承認</span>':""}<br>${esc(p.detail)}</div>`).join("");
+    return cardShell(dept.name,r.status,esc(r.headline),esc(r.report),
+      props?`<div class="proposals">${props}</div>`:"",
+      `<div class="time">${new Date(r.timestamp).toLocaleString("ja-JP")}</div>`,dept.id);
+  }).join("");
+}
+
+function cardShell(name,status,headline,report,proposals,time,id){
+  return `<article class="card ${status==="yellow"?"yellow":""}">
+    <div class="tag">${esc(name)}</div>
+    <div class="body">
+      <div class="status">${status==="yellow"?"● 要確認":"● 順調"}</div>
+      <div class="headline">${headline}</div>
+      <div class="report">${report}</div>
+      ${proposals}${time}
+      <button class="histBtn" onclick="showHistory('${id}','${esc(name)}')">履歴を見る</button>
+    </div></article>`;
+}
+
+function showHistory(id,name){
+  const list=(DATA.history||[]).filter(h=>h.dept_id===id);
+  $("#histTitle").textContent=name+" の報告履歴";
+  $("#histList").innerHTML=list.length?list.map(h=>
+    `<div class="histItem"><div class="d">${new Date(h.timestamp).toLocaleString("ja-JP")} ${h.status==="yellow"?"🟡":"🟢"}</div>
+     <b>${esc(h.headline)}</b><br>${esc(h.report)}</div>`).join("")
+    :'<div class="histItem">履歴がまだありません。</div>';
+  $("#historyArea").style.display="block";
+  $("#historyArea").scrollIntoView({behavior:"smooth"});
+}
+
+load();
+</script>
+</body>
+</html>
