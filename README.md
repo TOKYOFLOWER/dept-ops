@@ -15,8 +15,12 @@ docs/
   01_要件定義.md
   acceptance_criteria.md   ← 全PASSで完成（Definition of Done）
   SETUP_手順.md            ← 人間の作業（約30分）
+  DECISIONS.md             ← 自律実行中の判断ログ（要判断事項を含む）
+  TEST_RESULTS.md          ← 受け入れ基準を1項目ずつ検証した結果
 gas/                       ← Apps Script 一式（7ファイル）
 dashboard/index.html       ← GitHub Pages ダッシュボード
+tests/                     ← Node上の自動ユニットテスト（gas/*.jsを実ファイルのままvmでロード）
+package.json               ← `npm test` で54件のテストを実行
 ```
 
 ## 使い方（2通り）
@@ -30,5 +34,19 @@ claude --dangerously-skip-permissions
 > docs/00_指示_まず読む.md を読んで、タスクリストを完了まで実行してください
 ```
 テスト全PASS・TEST_RESULTS.md 生成・PR作成まで無人で走ります。
+
+## テストの実行
+
+```bash
+npm install
+npm test
+```
+
+gas/*.js の中から副作用のない関数（JSON応答パース・HMAC署名・Chatwork本文組み立て・
+LINE WORKS JWT組み立て・承認リンクの検証ロジック・ダッシュボード用データ整形など）を
+Node.jsの `vm` 上に実ファイルのままロードし、`node:test` で検証している
+（54件、GASの実行環境無しで再現できる自動テスト）。
+実際のRMS/Anthropic/Chatwork/LINE WORKS/Search Consoleとの通信が必要なテストと、
+ブラウザでの見た目確認（375px幅）は docs/TEST_RESULTS.md に手動確認手順を記載している。
 
 CONFIDENTIAL — 株式会社東京フラワー / 株式会社GSD 社内用
