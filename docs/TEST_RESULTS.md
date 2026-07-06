@@ -3,12 +3,12 @@
 自動テストは `npm install && npm test` で誰でも再実行できる（Node.js 20+）。
 実行方法・実装の考え方は docs/DECISIONS.md の3を参照。
 
-最終実行結果（2026-07-07時点）:
+最終実行結果（2026-07-07時点、公開リポジトリ化対応後）:
 
 ```
-tests 54
+tests 62
 suites 0
-pass 54
+pass 62
 fail 0
 cancelled 0
 skipped 0
@@ -16,7 +16,8 @@ todo 0
 ```
 
 内訳: collectors 9 / claude(parseReportJson_・askClaude_) 10 / notify 8 /
-setup(initSheets) 4 / orchestrator 5 / webapi 8 / dashboard(jsdom) 11 / E1統合 1 = 計54。
+setup(initSheets) 4 / orchestrator 5 / webapi 14（DATA_KEY関連6件を含む） /
+dashboard(jsdom) 13（config.js経由のURL組み立て確認1件・unauthorized表示確認1件を含む） = 計62。
 テストコードは tests/ 配下（`sandbox.mjs` が gas/*.js を実ファイルのままNodeの `vm` 上に
 ロードし、GASビルトインを最小スタブに差し替える。詳細はdocs/DECISIONS.mdの3を参照）。
 
@@ -69,6 +70,9 @@ setup(initSheets) 4 / orchestrator 5 / webapi 8 / dashboard(jsdom) 11 / E1統合
 
 - **E1** doGet(action=data)が最新報告・承認キュー・履歴30件を含むJSONを返す
   → **PASS（自動）** `tests/webapi.test.mjs` > "E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_が正しく集計される" / "buildDashboardData_: 3シートを統合したJSONを返す" / `tests/dashboard.test.mjs` > "fetch成功時はGAS応答のJSONがそのまま描画に使われる"
+  補足: action=dataは `DATA_KEY` によるアクセスキー一致が必須（下記「公開リポジトリ化に伴う変更」参照）。
+  キー一致時にJSONが返ること・不一致/未指定時は空のエラーJSONを返すことは
+  `tests/webapi.test.mjs` の "doGet(action=data): ..." 系3件でPASS確認済み。
 - **E2** 3部署のカードに信号色・headline・報告・提案が表示される
   → **PASS（自動・jsdom）** `tests/dashboard.test.mjs` > "モックデータで3部署分のカードが描画される" / "yellowステータスの部署カードにはyellowクラスと要確認表示が付く" / "提案(needs_decision)には「要承認」バッジが表示される"
 - **E3** 部署を選ぶと過去の報告履歴を遡って読める
@@ -86,17 +90,21 @@ setup(initSheets) 4 / orchestrator 5 / webapi 8 / dashboard(jsdom) 11 / E1統合
 - **F1** リポジトリ全体をgrepしてAPIキー・トークン・秘密鍵の直書きがゼロ
   → **PASS（自動確認済み）** 実行コマンドと結果:
     ```
-    grep -rEn "sk-ant-|AIza[0-9A-Za-z_-]{35}|-----BEGIN (RSA |EC |)PRIVATE KEY-----|xox[baprs]-[0-9A-Za-z-]+" \
-      --include="*.js" --include="*.mjs" --include="*.html" --include="*.json" --include="*.md" .
+    git ls-files -z | xargs -0 grep -lE "sk-ant-|AIza[0-9A-Za-z_-]{35}|-----BEGIN (RSA |EC |)PRIVATE KEY-----|xox[baprs]-[0-9A-Za-z-]+"
     ```
-    → マッチ0件（node_modules除く）。コード中の秘密情報はすべて `prop_('KEY_NAME')` / `PropertiesService` 経由の参照のみで、値の直書きは存在しない。
+    → マッチ0件（gitで実際に追跡されるファイルのみを対象、node_modules等は元々対象外）。
+    加えて、公開リポジトリ化にあたり以下も個別に確認した:
+    - 実際のGAS Script ID（`.clasp.json` の値）がgit追跡ファイル中に0件
+    - `script.google.com/macros/s/...` 形式の実WebアプリURLがgit追跡ファイル中に0件
+    - `git ls-files` で `.clasp.json` と `dashboard/config.js` が追跡対象に含まれていないことを確認
+    コード中の秘密情報はすべて `prop_('KEY_NAME')` / `PropertiesService` 経由の参照のみで、値の直書きは存在しない。
   補足: tests/notify.test.mjs のHMAC/JWTテストで使う `'unit-test-hmac-secret'` 等の文字列は
   ユニットテスト専用のダミー値であり、実運用の認証情報ではない。
 - **F2** Script Propertiesの必要キー一覧がSETUP_手順.mdに過不足なく記載されている
   → **PASS（コードレビューで確認）** gas/*.js 内の `prop_('KEY_NAME')` 呼び出しをすべて洗い出し
     （RMS_SERVICE_SECRET, RMS_LICENSE_KEY, ANTHROPIC_API_KEY, GSC_SITE_URL, CHATWORK_TOKEN,
     CHATWORK_ROOM_ID, LW_CLIENT_ID, LW_CLIENT_SECRET, LW_SERVICE_ACCOUNT, LW_PRIVATE_KEY,
-    LW_BOT_ID, LW_CHANNEL_ID, HMAC_SECRET, WEBAPP_URL, DASHBOARD_URL の15キー）、
+    LW_BOT_ID, LW_CHANNEL_ID, HMAC_SECRET, DATA_KEY, WEBAPP_URL, DASHBOARD_URL の16キー）、
     docs/SETUP_手順.md の一覧と1:1で一致することを確認済み。
 
 ## G. セットアップ再現性
@@ -109,6 +117,37 @@ setup(initSheets) 4 / orchestrator 5 / webapi 8 / dashboard(jsdom) 11 / E1統合
   → **PASS（自動）** `tests/setup.test.mjs` 全4件（4シート作成／ヘッダー一致／3部署が有効=trueで登録／再実行しても重複しない冪等性）
 
 ---
+
+## 公開リポジトリ化に伴う変更（2026-07-07）
+
+github.com/TOKYOFLOWER/dept-ops として公開リポジトリで運用するにあたり、以下を実施した。
+
+1. **`.clasp.json` と `dashboard/config.js` を `.gitignore` に追加し、`.clasp.json` は
+   `git rm --cached` で追跡から除外**（実在のGAS Script IDを公開リポジトリに含めないため）。
+   `dashboard/config.sample.js`（空値のテンプレート）のみコミットする。
+2. **dashboard/index.html の `GAS_URL` 定数を廃止**し、`dashboard/config.js`
+   （`window.DEPT_OPS_CONFIG = { gasUrl, dataKey }`）から読み込む方式に変更。
+   `tests/dashboard.test.mjs` は `<script src="config.js"></script>` をテスト用のインライン設定に
+   差し替える方式に更新し、config→fetch URLへの反映を "config.js の gasUrl/dataKey が
+   action=data のfetch URLに正しく反映される" でPASS確認済み。
+3. **gas/webapi.js に `DATA_KEY` による簡易アクセスキー検証を追加**。
+   `doGet?action=data` はクエリ `key` が Script Property `DATA_KEY` と一致しない場合、
+   シートを読まずに `{"error":"unauthorized"}` を返す（承認リンクapprove/rejectは既存のHMAC検証のまま変更なし）。
+   `verifyDataKey_` は未設定（空文字列）を渡すと常にfalseを返す＝設定漏れによる全公開を防ぐ設計。
+   `tests/webapi.test.mjs` の "verifyDataKey_: ..." 3件・"doGet(action=data): ..." 3件でPASS確認済み。
+   ダッシュボード側も `{error:...}` を受け取った場合は既存のエラー表示経路（E5）に合流するよう
+   `dashboard/index.html` の `load()` を変更し、"サーバーがアクセスキー不一致で
+   {error:\"unauthorized\"} を返した場合もエラー表示になる" でPASS確認済み。
+4. **README・docsの「CONFIDENTIAL／社外共有禁止」表記を削除**し、READMEに
+   「認証情報・接続先URLはScript Propertiesとconfig.jsで管理（非公開）」の一文を追加。
+5. **docs全体をレビューし、公開に不適切な内部情報を汎用表現に修正**:
+   発注者個人のニックネーム、開発ベンダー名、社内の他プロジェクト名（Chatworkルームの
+   紐付け先・GitHub Pages配置先の例・週次売上レポート等）を「経営者」「既存の社内自動化資産」
+   等の汎用表現に置き換えた（gas/setup.js内のClaude向けプロンプト文中の個人ニックネームも同様に修正、
+   コード動作への影響はなし）。株式会社東京フラワーという社名自体はリポジトリ所有者
+   （GitHub Organization: TOKYOFLOWER）と一致するため残している。金額・具体的な取引先名の記載は
+   レビューの結果見つからなかった。
+6. 上記変更後、`npm test` で62件全PASSを再確認し、`clasp push` でGASプロジェクトへ反映済み。
 
 ## 実データでの1サイクル確認（要件定義書9章 Definition of Done）
 

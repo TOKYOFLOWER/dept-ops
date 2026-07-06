@@ -6,13 +6,25 @@
 function doGet(e) {
   const p = (e && e.parameter) || {};
   try {
-    if (p.action === 'data') return jsonOut_(buildDashboardData_());
+    if (p.action === 'data') {
+      const expectedKey = PropertiesService.getScriptProperties().getProperty('DATA_KEY');
+      if (!verifyDataKey_(p.key, expectedKey)) return jsonOut_({ error: 'unauthorized' });
+      return jsonOut_(buildDashboardData_());
+    }
     if (p.action === 'approve' || p.action === 'reject') return handleDecision_(p);
     return htmlOut_('DEPT-OPS', 'action を指定してください。');
   } catch (err) {
     log_('ERROR', 'doGet: ' + err.message);
     return htmlOut_('エラー', escHtml_(err.message));
   }
+}
+
+/**
+ * action=data 用の簡易アクセスキー検証（純粋関数。モックデータでテスト可能）
+ * DATA_KEY が未設定の場合は常に拒否する（設定漏れによる全公開を防ぐ）。
+ */
+function verifyDataKey_(providedKey, expectedKey) {
+  return Boolean(expectedKey) && String(providedKey) === String(expectedKey);
 }
 
 function buildDashboardData_() {

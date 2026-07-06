@@ -30,13 +30,14 @@
 | RMS_SERVICE_SECRET / RMS_LICENSE_KEY | 既存RMS自動化と同じ |
 | ANTHROPIC_API_KEY | Claude APIキー |
 | GSC_SITE_URL | 例: `sc-domain:tokyoflower.jp`（URLプレフィックスなら `https://...` 完全一致） |
-| CHATWORK_TOKEN / CHATWORK_ROOM_ID | ai_companyと同じルームでOK |
-| LW_CLIENT_ID / LW_CLIENT_SECRET / LW_SERVICE_ACCOUNT / LW_PRIVATE_KEY / LW_BOT_ID / LW_CHANNEL_ID | 週次売上レポートの設定を流用（PRIVATE_KEYは改行を `\n` で1行化） |
+| CHATWORK_TOKEN / CHATWORK_ROOM_ID | 通知に使う任意のChatworkルームのトークン・ルームID |
+| LW_CLIENT_ID / LW_CLIENT_SECRET / LW_SERVICE_ACCOUNT / LW_PRIVATE_KEY / LW_BOT_ID / LW_CHANNEL_ID | LINE WORKS Developer Consoleで発行したService Account情報（PRIVATE_KEYは改行を `\n` で1行化） |
 | HMAC_SECRET | ランダムな長い文字列（例: `openssl rand -hex 32` の出力） |
+| DATA_KEY | ダッシュボードの `action=data` 用アクセスキー。ランダムな文字列（例: `openssl rand -hex 16` の出力）。手順4で dashboard/config.js に同じ値を設定する |
 | WEBAPP_URL | 手順3のデプロイ後に設定（それまでは未設定でOK） |
 | DASHBOARD_URL | 手順4の公開後に設定（それまでは未設定でOK。未設定でもChatwork報告は「(未設定)」と表示されるだけで動作する） |
 
-これで全15キー。過不足がないかは docs/acceptance_criteria.md の F2 でも確認できる。
+これで全16キー。過不足がないかは docs/acceptance_criteria.md の F2 でも確認できる。
 
 ## 3. Webアプリのデプロイ
 
@@ -48,11 +49,21 @@
 
 ## 4. ダッシュボード公開（GitHub Pages）
 
-1. dashboard/index.html の `const GAS_URL = "";` を `const GAS_URL = "（手順3のWEBAPP_URL）";` に書き換える
-2. 公開先のリポジトリに配置する
-   - 既存の GitHub Pages リポジトリがある場合: `dept-ops/index.html` として配置（buyer-badge や jinja と同じ流れ）
-   - 新規の場合: 新しいGitHubリポジトリを作成 → index.html をリポジトリ直下（または任意のサブフォルダ）に置く → 「Settings」→「Pages」→ Branch を `main` / フォルダを `/ (root)` に設定して保存 → 数分後に公開URLが表示される
+1. `dashboard/config.sample.js` を `dashboard/config.js` としてコピーし、以下を設定する（`config.js` は `.gitignore` 対象なので、これを公開リポジトリにコミットしても中身は追跡されない。実際に配置するサーバー/リポジトリ側にだけこのファイルを置く）
+   ```js
+   window.DEPT_OPS_CONFIG = {
+     gasUrl: "（手順3のWEBAPP_URL）",
+     dataKey: "（Script Propertiesに設定したDATA_KEYと同じ値）",
+   };
+   ```
+2. `dashboard/index.html` と `dashboard/config.js` の2ファイルを公開先に配置する
+   - 既存の GitHub Pages リポジトリがある場合: 任意のサブディレクトリ（例: `dept-ops/`）にこの2ファイルを配置
+   - 新規の場合: 新しいGitHubリポジトリを作成 → 2ファイルをリポジトリ直下（または任意のサブフォルダ）に置く → 「Settings」→「Pages」→ Branch を `main` / フォルダを `/ (root)` に設定して保存 → 数分後に公開URLが表示される
 3. 公開URLを Script Properties の `DASHBOARD_URL` に設定（Chatwork報告の末尾リンクに使われる）
+
+**注意**: `dashboard/config.js` にはWebアプリURLとアクセスキーが平文で入るため、この2つの値自体は
+「知っていれば誰でも報告データを読める」性質のものになる。閲覧を限定したい場合は
+DATA_KEYを長いランダム値にする、配置先リポジトリ/サイトを非公開にする、等で運用すること。
 
 ## 5. 動作確認 → 本稼働
 
@@ -72,4 +83,5 @@
 - **承認リンクが「署名エラー（403）」になる**: HMAC_SECRET を後から変更していないか確認（変更すると発行済みリンクは全て無効になる）
 - **承認リンクが常に「期限切れ」になる**: サーバー（GAS）とリンク発行時刻のタイムゾーン・時計のずれではなく、`APPROVAL_TTL_HOURS`（72時間）を過ぎていないか、リンクをブラウザのキャッシュから古いものを開いていないかを確認
 - **Chatworkに届かない**: CHATWORK_TOKEN / CHATWORK_ROOM_ID と、そのトークンがそのルームに投稿権限を持っているかを確認
-- **ダッシュボードが「データを取得できませんでした」と出る**: dashboard/index.html の GAS_URL が正しいデプロイURLになっているか、Webアプリのアクセス権限が「全員」になっているかを確認
+- **ダッシュボードが「データを取得できませんでした」と出る**: dashboard/config.js の gasUrl が正しいデプロイURLになっているか、Webアプリのアクセス権限が「全員」になっているかを確認
+- **ダッシュボードが「unauthorized」エラーになる**: dashboard/config.js の dataKey と Script Properties の DATA_KEY が完全に一致しているか確認
