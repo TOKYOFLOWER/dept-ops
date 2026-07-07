@@ -56,13 +56,21 @@ function hmacSignWithSecret_(payload, secret) {
   return sig.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
 }
 
-/** HTTP GET/POST共通：失敗時は HTTPステータスコードと試行URLを含む例外を投げる */
+/**
+ * HTTP GET/POST共通：失敗時は HTTPステータスコードと試行URLを含む例外を投げる。
+ * 例外オブジェクトには httpCode / requestUrl / responseBody も付与する
+ * （呼び出し側が個別にログへ詳細を残したい場合に文字列パース不要で使える）。
+ */
 function fetchText_(url, options) {
   const res = UrlFetchApp.fetch(url, Object.assign({ muteHttpExceptions: true }, options || {}));
   const code = res.getResponseCode();
   const text = res.getContentText();
   if (code < 200 || code >= 300) {
-    throw new Error('HTTP ' + code + ' ' + url + ' :: ' + text.slice(0, 300));
+    const err = new Error('HTTP ' + code + ' ' + url + ' :: ' + text.slice(0, 300));
+    err.httpCode = code;
+    err.requestUrl = url;
+    err.responseBody = text;
+    throw err;
   }
   return text;
 }

@@ -1,6 +1,7 @@
 /**
  * Web API
  *  - doGet?action=data           → ダッシュボード用JSON
+ *  - doGet?action=dashboard      → ダッシュボードHTML（GAS直接配信。GitHub Pages不要）
  *  - doGet?action=approve|reject → 承認リンク（HMAC署名＋期限つき）
  */
 function doGet(e) {
@@ -10,6 +11,11 @@ function doGet(e) {
       const expectedKey = PropertiesService.getScriptProperties().getProperty('DATA_KEY');
       if (!verifyDataKey_(p.key, expectedKey)) return jsonOut_({ error: 'unauthorized' });
       return jsonOut_(buildDashboardData_());
+    }
+    if (p.action === 'dashboard') {
+      const expectedKey = PropertiesService.getScriptProperties().getProperty('DATA_KEY');
+      if (!verifyDataKey_(p.key, expectedKey)) return htmlOut_('DEPT-OPS', 'アクセスできません。');
+      return renderDashboardPage_();
     }
     if (p.action === 'approve' || p.action === 'reject') return handleDecision_(p);
     return htmlOut_('DEPT-OPS', 'action を指定してください。');
@@ -25,6 +31,21 @@ function doGet(e) {
  */
 function verifyDataKey_(providedKey, expectedKey) {
   return Boolean(expectedKey) && String(providedKey) === String(expectedKey);
+}
+
+/**
+ * action=dashboard: gas/dashboard.html をHtmlServiceテンプレートとして評価し、
+ * gasUrl(=WEBAPP_URL) / dataKey(=DATA_KEY) をスクリプトレットに注入して返す。
+ * スマホ表示用にタイトルとviewportメタタグを明示的に設定する（IFRAMEサンドボックスのため
+ * HTML内の<title>/<meta viewport>だけでは反映されない）。
+ */
+function renderDashboardPage_() {
+  const tmpl = HtmlService.createTemplateFromFile('dashboard');
+  tmpl.gasUrl = prop_('WEBAPP_URL');
+  tmpl.dataKey = prop_('DATA_KEY');
+  return tmpl.evaluate()
+    .setTitle('DEPT-OPS')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 function buildDashboardData_() {
@@ -46,15 +67,29 @@ function mapDeptRows_(rows) {
     .map(function (r) { return { id: r[0], name: r[1], enabled: r[2] === true || r[2] === 'TRUE' }; });
 }
 
-/** 報告履歴シート行 → 直近30件の履歴配列（純粋関数。モックデータでテスト可能） */
+/**
+ * 報告履歴シート行 → 部署ごと直近14件の履歴配列（純粋関数。モックデータでテスト可能）
+ * 全部署合算ではなく部署ごとに直近14件を残す（ダッシュボードの14日分状況推移ドット表示のため）。
+ * シート行は追記順（古い→新しい）を前提とし、返り値は新しい順（newest-first）に統一する。
+ */
 function mapHistoryRows_(rows) {
-  return (rows || []).slice(-30).reverse().map(function (r) {
-    return {
+  const byDept = {};
+  (rows || []).forEach(function (r) {
+    const deptId = r[1];
+    const entry = {
       timestamp: r[0] instanceof Date ? r[0].toISOString() : String(r[0]),
-      dept_id: r[1], status: r[2], headline: r[3], report: r[4],
+      dept_id: deptId, status: r[2], headline: r[3], report: r[4],
       proposals: safeParse_(r[5], []),
     };
+    if (!byDept[deptId]) byDept[deptId] = [];
+    byDept[deptId].push(entry);
   });
+  let result = [];
+  Object.keys(byDept).forEach(function (deptId) {
+    result = result.concat(byDept[deptId].slice(-14));
+  });
+  result.sort(function (a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
+  return result;
 }
 
 /** 履歴配列から部署ごとの最新1件を抽出（純粋関数。モックデータでテスト可能） */

@@ -3,26 +3,29 @@
 自動テストは `npm install && npm test` で誰でも再実行できる（Node.js 20+）。
 実行方法・実装の考え方は docs/DECISIONS.md の3を参照。
 
-最終実行結果（2026-07-08時点、collectors.jsの公式仕様確定修正後）:
+最終実行結果（2026-07-08時点、ダッシュボードのGAS直接配信移行後）:
 
 ```
-tests 94
+tests 102
 suites 0
-pass 94
+pass 102
 fail 0
 cancelled 0
 skipped 0
 todo 0
 ```
 
-内訳: claude.test.mjs 10 / collectors.test.mjs 27（CouponAPI 1.0のXML解析・discountType変換・
-couponEndDateフィルタ、在庫API 2.1のvariant単位判定・200SKU上限共有・404/403フォールバックを含む） /
-notify.test.mjs 7 / orchestrator.test.mjs 6（approval_id突き合わせ1件を含む） / setup.test.mjs 4 /
-webapi.test.mjs 14（DATA_KEY関連6件を含む） / dashboard.test.mjs 26（サマリーバー・3層カード・
-用語タップ・承認キュータブ・状況推移ドット・14pxアクセシビリティ検査を含む） = 計94。
+内訳: claude.test.mjs 10 / collectors.test.mjs 29（CouponAPI 1.0のXML解析・discountType変換・
+couponEndDateフィルタ、在庫API 2.1のvariant単位判定・200SKU上限共有・404/403フォールバック・
+最初の1件のみWARNログを含む） / notify.test.mjs 7 / orchestrator.test.mjs 6（approval_id突き合わせ
+1件を含む） / setup.test.mjs 4 / webapi.test.mjs 20（DATA_KEY関連6件・action=dashboard関連4件・
+部署ごと直近14件の履歴ロジック2件を含む） / dashboard.test.mjs 26（サマリーバー・3層カード・
+用語タップ・承認キュータブ・状況推移ドット・14pxアクセシビリティ検査を含む。gas/dashboard.htmlを
+テンプレートスクリプトレットごと評価して検証） = 計102。
 テストコードは tests/ 配下（`sandbox.mjs` が gas/*.js を実ファイルのままNodeの `vm` 上に
 ロードし、GASビルトインを最小スタブに差し替える。詳細はdocs/DECISIONS.mdの3を参照。
-XMLパース検証用に jsdomの`DOMParser`を利用した`XmlService`スタブも追加した）。
+XMLパース検証用に jsdomの`DOMParser`を利用した`XmlService`スタブ、HTMLテンプレート検証用に
+`HtmlService.createTemplateFromFile`スタブも追加した）。
 
 ---
 
@@ -71,18 +74,29 @@ XMLパース検証用に jsdomの`DOMParser`を利用した`XmlService`スタブ
 
 ## E. ダッシュボード
 
-- **E1** doGet(action=data)が最新報告・承認キュー・履歴30件を含むJSONを返す
-  → **PASS（自動）** `tests/webapi.test.mjs` > "E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_が正しく集計される" / "buildDashboardData_: 3シートを統合したJSONを返す" / `tests/dashboard.test.mjs` > "fetch成功時はGAS応答のJSONがそのまま描画に使われる"
+- **E1** doGet(action=data)が最新報告・承認キュー・履歴（部署ごと直近14件）を含むJSONを返す
+  → **PASS（自動）** `tests/webapi.test.mjs` > "E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_が正しく集計される" / "E1: mapHistoryRows_は全部署合算ではなく部署ごとに直近14件を残す" / "E1: mapHistoryRows_の返り値は部署混在でも常にタイムスタンプ降順（newest-first）" / "buildDashboardData_: 3シートを統合したJSONを返す" / `tests/dashboard.test.mjs` > "fetch成功時はGAS応答のJSONがそのまま描画に使われる"
   補足: action=dataは `DATA_KEY` によるアクセスキー一致が必須（下記「公開リポジトリ化に伴う変更」参照）。
   キー一致時にJSONが返ること・不一致/未指定時は空のエラーJSONを返すことは
   `tests/webapi.test.mjs` の "doGet(action=data): ..." 系3件でPASS確認済み。
+  2026-07-08: 履歴取得を「全部署合算30件」から「部署ごと直近14件」に変更した
+  （docs/DECISIONS.md #9参照。ダッシュボードの14日ドット列が部署の実行頻度に関わらず
+  常に最大14日分表示できるようにするため）。
 - **E2** 3部署のカードに信号色・headline・報告・提案が表示される
   → **PASS（自動・jsdom）** `tests/dashboard.test.mjs` > "モックデータで3部署分のカードが描画される" / "yellowステータスの部署カードにはyellowクラスと「要確認」の文字ラベルが付く（E2・色以外の手がかり）"
 - **E3** 部署を選ぶと過去の報告履歴を遡って読める
   → **PASS（自動・jsdom）** 同ファイル > "履歴を見るボタンで該当部署の履歴が表示される" / "履歴が0件のときは「履歴がまだありません」と表示される"
 - **E4** スマホ幅(375px)でレイアウトが崩れない
   → **要手動確認**（jsdomはCSSレイアウトを計算しないため自動化不可。docs/DECISIONS.mdの6参照）
-  1. dashboard/index.html をブラウザで開く（`GAS_URL=""` のままならモックデータで表示される）
+  2026-07-08: dashboard/index.html は廃止し gas/dashboard.html（GASのHtmlServiceテンプレート）に
+  一本化した。`<?= gasUrl ?>` / `<?= dataKey ?>` はGAS側の評価がないと展開されないため、
+  ブラウザで直接ファイルを開いても正しく動かない。確認方法は次のいずれか:
+  - **本番同等の確認（推奨）**: SETUP_手順.md の手順に従ってデプロイし、
+    `WEBAPP_URL?action=dashboard&key=DATA_KEY` を実機/DevToolsのモバイル表示で開く
+  - **ローカルでのモック表示確認**: gas/dashboard.html を一時的にコピーし、
+    `<?= gasUrl ?>` と `<?= dataKey ?>` を空文字列に置換した一時ファイルをブラウザで開く
+    （置換後は破棄し、gas/dashboard.html 自体は変更しないこと）
+  1. 上記いずれかの方法で開く
   2. Chrome DevToolsのデバイスツールバーで幅375px（iPhone SE相当）に設定
   3. 期待結果: 横スクロールが発生しない。3部署カードが縦積みになり、木札部分（縦書き部署名）とカード本文が横に並んだまま崩れない。サマリーバー・承認キュータブも折り返されて他要素と重ならない
 - **E5** データ取得失敗時にエラーメッセージと再読込ボタンが表示される
@@ -179,13 +193,15 @@ github.com/TOKYOFLOWER/dept-ops として公開リポジトリで運用するに
   同じIDで記録するようにした（Task Aの対象はdashboard/index.htmlのみと指示されていたが、
   この突き合わせにはバックエンドの協力が必須なため、最小限の追加として実施。既存の
   A1-A3・C2のテストへの影響がないことを確認済み）。
-- **（仮説）状況推移ドット列は「直近14日分」を狙って実装したが、`webapi.js`の`mapHistoryRows_`は
-  E1の受け入れ基準どおり全部署合算で直近30件までしか返さない。3部署が毎日実行される運用では
-  1部署あたり実質10日分程度しか表示されない可能性がある。E1の「履歴30件」は既存の合格基準の
-  ため変更していない。運用実態に応じて件数上限の見直しを検討してほしい。**
+- **（2026-07-08にクローズ）** 状況推移ドット列は「直近14日分」を狙って実装したが、当時の
+  `webapi.js`の`mapHistoryRows_`はE1の受け入れ基準どおり全部署合算で直近30件までしか返さず、
+  3部署が毎日実行される運用では1部署あたり実質10日分程度しか表示されない可能性があった。
+  同日、履歴取得を「部署ごと直近14件」に変更して解消済み（docs/DECISIONS.md #9、
+  下記「ダッシュボードGAS直接配信移行・履歴ロジック変更」参照）。
 - E4（375px崩れなし）・E9のうち375px部分は上記の手動手順で確認する。以下はモックデータでの
   ブラウザ確認手順（スクリーンショット相当の目視チェック）:
-  1. ブラウザで `dashboard/index.html` を直接開く（`dashboard/config.js` が空値ならモックデータ表示になる）
+  1. gas/dashboard.html を一時コピーし `<?= gasUrl ?>` / `<?= dataKey ?>` を空文字列に置換した
+     ファイルをブラウザで直接開く（2026-07-08以降。上記E4の注記参照。空文字列にするとモックデータ表示になる）
   2. ページ最上部にサマリーバー（濃い緑の帯）が表示され、3秒以内に「🟢◯部署 順調」「🟡◯部署 要確認」
      「⏳ 承認待ち◯件」の文字が読めることを確認
   3. 各部署カードで「くわしい根拠を見る」をタップ→開閉し、report本文とデータ取得時刻が表示されることを確認
@@ -231,6 +247,64 @@ github.com/TOKYOFLOWER/dept-ops として公開リポジトリで運用するに
   実際のRMS APIとの通信を伴う最終確認は、Script Propertiesに実認証情報を設定した環境でGASエディタから
   `test_runMarketOnly()` 等を実行し、出力テキストに意図した内容（有効クーポンの整形・在庫不明の除外・
   200SKU注記・404時のURL/コード表示・日付行）が含まれることを目視確認すること。
+
+## ダッシュボードGAS直接配信移行・履歴ロジック変更（2026-07-08）
+
+### 1. dashboard/index.html → gas/dashboard.html（GAS内移設）
+
+- dashboard/index.html・dashboard/config.js・dashboard/config.sample.js を廃止し、
+  `dashboard/` ディレクトリごと削除した。ダッシュボードのHTMLは `gas/dashboard.html` を
+  唯一のソースとする（clasp管理下。`clasp push` で他のgas/*.jsと一緒に配信先へ反映される）。
+- クライアント側の設定ファイル（旧 `window.DEPT_OPS_CONFIG` を読み込む `config.js`）方式を廃止し、
+  GASのHtmlServiceテンプレートのスクリプトレット `<?= gasUrl ?>` / `<?= dataKey ?>` を
+  `window.DEPT_OPS_CONFIG = { gasUrl: '...', dataKey: '...' };` に埋め込む方式へ変更した
+  （値はサーバー側 `renderDashboardPage_` が注入する。詳細は下記2）。
+- README・SETUP_手順.mdからGitHub Pages関連の記述を除去し、GAS配信方式に書き換えた。
+
+### 2. gas/webapi.js: action=dashboard の追加
+
+- `doGet?action=dashboard&key=...` で、`key` がScript Propertiesの `DATA_KEY` と一致する場合のみ
+  `HtmlService.createTemplateFromFile('dashboard')` を評価して返す（`renderDashboardPage_`）。
+  `gasUrl` には `WEBAPP_URL`、`dataKey` には `DATA_KEY` のScript Property値をそのまま注入する。
+- 不一致・未指定の場合は `verifyDataKey_`（action=dataと共通）で拒否し、gasUrl/dataKeyは
+  一切含まれないエラーページ（`htmlOut_('DEPT-OPS', 'アクセスできません。')`）を返す。
+- `.setTitle('DEPT-OPS')` と `.addMetaTag('viewport', 'width=device-width, initial-scale=1')` を
+  返り値のHtmlOutputに設定した（IFRAMEサンドボックスではHTML内の`<title>`/`<meta>`だけでは
+  反映されないため）。承認リンク（action=approve/reject）・action=dataの処理・検証ロジックは変更していない。
+- `tests/sandbox.mjs` に `HtmlService.createTemplateFromFile` スタブ（`gas/*.html` を実ファイルから
+  読み込み、`<?= expr ?>` をテンプレート変数へプレーン置換する簡易版）を追加し、
+  `tests/webapi.test.mjs` の "doGet(action=dashboard): ..." 系4件でPASS確認済み
+  （正しいkeyでの注入確認、不一致/未指定/DATA_KEY未設定時に何も漏らさないことを含む）。
+
+### 3. 在庫APIデバッグ支援
+
+- `gas/orchestrator.js` に `test_runItemsOnly()` を追加（`test_runMarketOnly()` と同形式で
+  商品管理部だけ単独実行）。既存の `test_runMarketOnly()` 同様、自動テストの対象外で
+  GASエディタからの手動実行を想定した関数のため、自動テストは追加していない
+  （手順はSETUP_手順.mdの動作確認セクションに記載）。
+- `fetchVariantQuantity_` が失敗した場合、`determineStockStatuses_` が実行全体を通して
+  **最初の1件だけ** HTTPコード・試行URL・レスポンス本文（先頭200字）を `log_('WARN', ...)` で
+  実行ログに記録するようにした（2件目以降は記録しない＝ノイズ防止）。`config.js`の`fetchText_`が
+  投げる例外に `httpCode` / `requestUrl` / `responseBody` プロパティを追加し、文字列パース不要で
+  詳細を取り出せるようにした。`tests/collectors.test.mjs`の2件（最初の1件のみ記録されること・
+  全件成功時は記録されないこと）でPASS確認済み。
+
+### 4. webapi.js: 履歴取得を「全部署合算30件」→「部署ごと直近14件」に変更
+
+- `mapHistoryRows_` を、シート全体から直近30行を切り出す方式から、`dept_id` ごとにグルーピングして
+  各グループの直近14件を残す方式に変更した（部署の実行頻度に関わらず、各部署が常に最大14日分の
+  履歴を保持できるようにするため。docs/DECISIONS.md #9を参照、既知の制約としてクローズ済み）。
+  返り値はタイムスタンプ降順（newest-first）に統一しており、`pickLatestByDept_` 等の
+  「配列の先頭が最新」という既存の前提は変えていない。
+- docs/acceptance_criteria.md のE1を「履歴30件」から「履歴（部署ごと直近14件）」に更新した。
+- `tests/webapi.test.mjs`に3件追加（部署ごと14件に切り詰められること・件数が少ない部署は
+  全件残ること・部署混在でも常にnewest-first順であること）でPASS確認済み。
+
+### 5. テスト・デプロイ
+
+`npm test` で102件全PASS（内訳は本ファイル冒頭を参照）。`clasp push` でGASプロジェクトへ反映し、
+`git ls-files` で `dashboard/` 配下のファイルが1件も残っていないこと、`.clasp.json` が
+引き続き未追跡であることを確認した。
 
 ## 実データでの1サイクル確認（要件定義書9章 Definition of Done）
 

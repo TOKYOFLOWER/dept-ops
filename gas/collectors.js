@@ -149,7 +149,7 @@ function collectItems_() {
   const stats = { total: 0, noStock: 0, stockUnknown: 0, shortDesc: 0, noImage: 0, hidden: 0, riskWords: [] };
   const RISK = ['治る', '治す', '効能', '効果があります', '医薬', 'アンチエイジング', '痩せる'];
   let cursor = null, pages = 0;
-  const capState = { count: 0, cap: INVENTORY_VARIANT_CAP, capped: false };
+  const capState = { count: 0, cap: INVENTORY_VARIANT_CAP, capped: false, firstFailureLogged: false };
 
   try {
     do {
@@ -189,9 +189,11 @@ function fetchVariantQuantity_(manageNumber, variantId) {
 
 /**
  * 商品ごとの在庫状況（'in'|'out'|'unknown'）を、バリアントごとの在庫API呼び出しで判定する。
- * capState（{count, cap, capped}）は複数ページ・複数商品にまたがって共有し、上限到達後は
- * 以降のバリアントを呼び出さず全て'unknown'扱いにする（実行時間対策）。
- * fetchQuantity(manageNumber, variantId) が投げた例外（404/403等）はそのSKUを在庫不明として無視する。
+ * capState（{count, cap, capped, firstFailureLogged}）は複数ページ・複数商品にまたがって共有し、
+ * 上限到達後は以降のバリアントを呼び出さず全て'unknown'扱いにする（実行時間対策）。
+ * fetchQuantity(manageNumber, variantId) が投げた例外（404/403等）はそのSKUを在庫不明として扱う。
+ * デバッグ支援として、最初の1件の失敗だけHTTPコード・レスポンス本文先頭200字・試行URLを
+ * 実行ログ（log_）にWARNで残す（全件ログはノイズになるため2件目以降は記録しない）。
  */
 function determineStockStatuses_(items, fetchQuantity, capState) {
   const result = {};
@@ -211,7 +213,15 @@ function determineStockStatuses_(items, fetchQuantity, capState) {
           if (qty > 0) anyInStock = true;
         }
       } catch (e) {
-        // 404/403等はそのSKUを在庫不明として扱う（除外）。他のエラーも同様に安全側へ倒す。
+        if (!capState.firstFailureLogged) {
+          capState.firstFailureLogged = true;
+          log_('WARN', '在庫API取得失敗（最初の1件のみ記録）: manageNumber=' + it.manageNumber +
+            ' variantId=' + vid +
+            ' HTTPコード=' + (e.httpCode != null ? e.httpCode : '不明') +
+            ' 試行URL=' + (e.requestUrl || '不明') +
+            ' レスポンス本文(先頭200字)=' + String(e.responseBody != null ? e.responseBody : e.message).slice(0, 200));
+        }
+        // このSKUは在庫不明として扱う（除外）。404/403以外の例外も同様に安全側へ倒す。
       }
     });
     result[it.manageNumber] = !anyKnown ? 'unknown' : (anyInStock ? 'in' : 'out');

@@ -165,10 +165,12 @@
 <div id="stateBox" hidden></div>
 <div id="tooltipPopup" hidden role="tooltip"></div>
 
-<script src="config.js"></script>
 <script>
-/* GAS WebアプリのURL・アクセスキーは dashboard/config.js（gitignore対象）で設定する。
-   SETUP_手順.md 参照。gasUrlが空ならモックデータで表示。 */
+window.DEPT_OPS_CONFIG = { gasUrl: '<?= gasUrl ?>', dataKey: '<?= dataKey ?>' };
+</script>
+<script>
+/* gasUrl・dataKeyはGAS側（webapi.jsのdoGet action=dashboard）がHtmlServiceテンプレートの
+   スクリプトレットで注入する。gasUrlが空ならモックデータで表示。 */
 const GAS_URL = (window.DEPT_OPS_CONFIG && window.DEPT_OPS_CONFIG.gasUrl) || "";
 const DATA_KEY = (window.DEPT_OPS_CONFIG && window.DEPT_OPS_CONFIG.dataKey) || "";
 

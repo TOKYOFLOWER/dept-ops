@@ -115,7 +115,29 @@ export function buildSandbox(scriptPropsOverrides) {
     },
     HtmlService: {
       createHtmlOutput(html) {
-        return { _html: html, setTitle() { return this; } };
+        return { _html: html, setTitle() { return this; }, addMetaTag() { return this; } };
+      },
+      // GASのHtmlTemplate/HtmlOutputの最小サブセット。<?= expr ?> をテンプレート変数の値に
+      // 置換する（実際のGASはHTMLエスケープするが、テストではプレーンな値置換で十分）。
+      createTemplateFromFile(name) {
+        const source = fs.readFileSync(path.join(GAS_DIR, name + '.html'), 'utf8');
+        const tmpl = {
+          evaluate() {
+            const html = source.replace(/<\?=\s*([\w.]+)\s*\?>/g, (m, expr) => {
+              const val = tmpl[expr];
+              return val == null ? '' : String(val);
+            });
+            return {
+              _html: html,
+              _title: null,
+              _metaTags: [],
+              setTitle(t) { this._title = t; return this; },
+              addMetaTag(n, content) { this._metaTags.push({ name: n, content }); return this; },
+              getContent() { return this._html; },
+            };
+          },
+        };
+        return tmpl;
       },
     },
     ScriptApp: { getOAuthToken() { return 'fake-oauth-token'; } },

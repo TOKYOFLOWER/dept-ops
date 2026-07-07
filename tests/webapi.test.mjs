@@ -147,6 +147,35 @@ test('doGet(action=data): keyが未指定でも空のエラーJSONを返す', ()
   assert.deepEqual(body, { error: 'unauthorized' });
 });
 
+// ---------- doGet(action=dashboard): GAS直接配信 ----------
+test('doGet(action=dashboard): keyが正しければdashboard.htmlをgasUrl/dataKey注入済みで返す', () => {
+  const { sandbox } = ctx({}, { DATA_KEY: 'secret-key-1', WEBAPP_URL: 'https://script.google.com/macros/s/xxx/exec' });
+  const res = sandbox.doGet({ parameter: { action: 'dashboard', key: 'secret-key-1' } });
+  assert.equal(res._title, 'DEPT-OPS');
+  assert.deepEqual(Array.from(res._metaTags), [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }]);
+  assert.match(res.getContent(), /gasUrl: 'https:\/\/script\.google\.com\/macros\/s\/xxx\/exec'/);
+  assert.match(res.getContent(), /dataKey: 'secret-key-1'/);
+});
+
+test('doGet(action=dashboard): keyが不一致なら何も漏らさないエラーページを返す（HTMLにgasUrl/dataKeyを含まない）', () => {
+  const { sandbox } = ctx({}, { DATA_KEY: 'secret-key-1', WEBAPP_URL: 'https://script.google.com/macros/s/xxx/exec' });
+  const res = sandbox.doGet({ parameter: { action: 'dashboard', key: 'wrong-key' } });
+  assert.doesNotMatch(res._html, /xxx/);
+  assert.doesNotMatch(res._html, /secret-key-1/);
+});
+
+test('doGet(action=dashboard): keyが未指定でもエラーページを返す', () => {
+  const { sandbox } = ctx({}, { DATA_KEY: 'secret-key-1' });
+  const res = sandbox.doGet({ parameter: { action: 'dashboard' } });
+  assert.doesNotMatch(res._html, /secret-key-1/);
+});
+
+test('doGet(action=dashboard): DATA_KEY未設定の環境では常に拒否される', () => {
+  const { sandbox } = ctx({}, {});
+  const res = sandbox.doGet({ parameter: { action: 'dashboard', key: '' } });
+  assert.doesNotMatch(res._html, /gasUrl/);
+});
+
 // ---------- E1: doGet(action=data) の集計ロジック ----------
 test('E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_ が正しく集計される', () => {
   const { sandbox } = ctx();
@@ -159,15 +188,15 @@ test('E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_ が正
   assert.equal(depts[2].enabled, false);
 
   const history = sandbox.mapHistoryRows_([
-    [new Date('2026-07-01'), 'market', 'green', 'H1', 'R1', '[]'],
-    [new Date('2026-07-02'), 'market', 'yellow', 'H2', 'R2', '[{"title":"p"}]'],
-    [new Date('2026-07-02'), 'seo', 'green', 'H3', 'R3', '[]'],
+    [new Date('2026-07-01T06:00:00Z'), 'market', 'green', 'H1', 'R1', '[]'],
+    [new Date('2026-07-02T06:00:00Z'), 'market', 'yellow', 'H2', 'R2', '[{"title":"p"}]'],
+    [new Date('2026-07-03T06:00:00Z'), 'seo', 'green', 'H3', 'R3', '[]'],
   ]);
   assert.equal(history.length, 3);
-  assert.equal(history[0].dept_id, 'seo'); // 新しい順(reverse)で先頭
+  assert.equal(history[0].dept_id, 'seo'); // 新しい順(newest-first)で先頭
 
   const latest = sandbox.pickLatestByDept_(history);
-  assert.equal(latest.market.headline, 'H2'); // marketの最新はH2（2026-07-02分）
+  assert.equal(latest.market.headline, 'H2'); // marketの最新はH2
   assert.equal(latest.seo.headline, 'H3');
 
   const approvals = sandbox.mapApprovalRows_([
@@ -177,6 +206,39 @@ test('E1: mapDeptRows_/mapHistoryRows_/pickLatestByDept_/mapApprovalRows_ が正
   assert.equal(approvals.length, 2);
   assert.equal(approvals[0].id, 'a2'); // reverse順
   assert.equal(approvals[0].proposal.title, 't2');
+});
+
+test('E1: mapHistoryRows_は全部署合算ではなく部署ごとに直近14件を残す', () => {
+  const { sandbox } = ctx();
+  // marketだけ20件（シートは古い→新しい順で追記される）、seoは3件
+  const rows = [];
+  for (let i = 1; i <= 20; i++) {
+    rows.push([new Date('2026-07-' + String(i).padStart(2, '0') + 'T06:00:00Z'), 'market', 'green', 'M' + i, 'R' + i, '[]']);
+  }
+  for (let i = 1; i <= 3; i++) {
+    rows.push([new Date('2026-07-' + String(i).padStart(2, '0') + 'T07:00:00Z'), 'seo', 'green', 'S' + i, 'R' + i, '[]']);
+  }
+  const history = sandbox.mapHistoryRows_(rows);
+  const marketEntries = history.filter((h) => h.dept_id === 'market');
+  const seoEntries = history.filter((h) => h.dept_id === 'seo');
+  assert.equal(marketEntries.length, 14, 'marketは20件中直近14件のみ残る');
+  assert.equal(seoEntries.length, 3, 'seoは3件しかないため3件とも残る（全部署合算の上限に食われない）');
+  assert.equal(marketEntries[0].headline, 'M20'); // 最新が先頭
+  assert.equal(marketEntries[marketEntries.length - 1].headline, 'M7'); // 直近14件の最古はM7(20-14+1)
+});
+
+test('E1: mapHistoryRows_の返り値は部署混在でも常にタイムスタンプ降順（newest-first）', () => {
+  const { sandbox } = ctx();
+  const rows = [
+    [new Date('2026-07-01T06:00:00Z'), 'market', 'green', 'M1', 'R', '[]'],
+    [new Date('2026-07-05T06:00:00Z'), 'seo', 'green', 'S1', 'R', '[]'],
+    [new Date('2026-07-03T06:00:00Z'), 'items', 'green', 'I1', 'R', '[]'],
+  ];
+  const history = sandbox.mapHistoryRows_(rows);
+  const timestamps = Array.from(history).map((h) => new Date(h.timestamp).getTime());
+  const sorted = [...timestamps].sort((a, b) => b - a);
+  assert.deepEqual(timestamps, sorted);
+  assert.equal(history[0].headline, 'S1'); // 2026-07-05が最新
 });
 
 test('buildDashboardData_: 3シートを統合したJSONを返す（E1の統合確認）', () => {

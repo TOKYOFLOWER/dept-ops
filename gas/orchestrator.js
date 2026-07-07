@@ -90,3 +90,11 @@ function test_runMarketOnly() {
   const out = runDept_({ id: row[0], name: row[1], enabled: true, model: row[3], prompt: row[4] });
   console.log(JSON.stringify(out, null, 2));
 }
+
+/** 商品管理部（在庫API・ItemAPI連携）だけ単独実行して動作確認する */
+function test_runItemsOnly() {
+  const rows = sheet_(CONF.SHEET.DEPTS).getDataRange().getValues().slice(1);
+  const row = rows.filter(function (r) { return r[0] === 'items'; })[0];
+  const out = runDept_({ id: row[0], name: row[1], enabled: true, model: row[3], prompt: row[4] });
+  console.log(JSON.stringify(out, null, 2));
+}

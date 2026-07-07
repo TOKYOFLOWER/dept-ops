@@ -3,12 +3,23 @@ import assert from 'node:assert/strict';
 import { buildSandbox, loadGasFiles } from './sandbox.mjs';
 
 function ctx(scriptProps) {
-  const { sandbox } = buildSandbox(Object.assign(
+  const { sandbox, sheetsData } = buildSandbox(Object.assign(
     { RMS_SERVICE_SECRET: 'test-secret', RMS_LICENSE_KEY: 'test-license' },
     scriptProps || {}
   ));
   loadGasFiles(sandbox, ['config.js', 'collectors.js']);
+  sheetsData['実行ログ'] = [['timestamp', 'level', 'message']];
   return sandbox;
+}
+
+function ctxWithSheets(scriptProps) {
+  const { sandbox, sheetsData } = buildSandbox(Object.assign(
+    { RMS_SERVICE_SECRET: 'test-secret', RMS_LICENSE_KEY: 'test-license' },
+    scriptProps || {}
+  ));
+  loadGasFiles(sandbox, ['config.js', 'collectors.js']);
+  sheetsData['実行ログ'] = [['timestamp', 'level', 'message']];
+  return { sandbox, sheetsData };
 }
 
 function fakeRes(status, text) {
@@ -193,6 +204,32 @@ test('determineStockStatuses_: 全バリアントが404/403相当の例外なら
   const fetchQty = () => { throw new Error('HTTP 404 ...'); };
   const result = s.determineStockStatuses_(items, fetchQty, { count: 0, cap: 200, capped: false });
   assert.equal(result.A, 'unknown');
+});
+
+test('determineStockStatuses_: 最初の失敗1件だけHTTPコード・URL・レスポンス本文200字を実行ログにWARN記録する', () => {
+  const { sandbox, sheetsData } = ctxWithSheets();
+  const items = [{ item: { manageNumber: 'A', variants: { s1: {}, s2: {} } } }, { item: { manageNumber: 'B', variants: { s3: {} } } }];
+  const fetchQty = () => {
+    const err = new Error('HTTP 404 https://example.invalid/x :: not found');
+    err.httpCode = 404;
+    err.requestUrl = 'https://example.invalid/x';
+    err.responseBody = 'x'.repeat(300);
+    throw err;
+  };
+  sandbox.determineStockStatuses_(items, fetchQty, { count: 0, cap: 200, capped: false, firstFailureLogged: false });
+  const warnRows = sheetsData['実行ログ'].filter((r) => r[1] === 'WARN');
+  assert.equal(warnRows.length, 1, '3件失敗しても記録は最初の1件のみ');
+  assert.match(warnRows[0][2], /HTTPコード=404/);
+  assert.match(warnRows[0][2], /試行URL=https:\/\/example\.invalid\/x/);
+  const loggedBody = warnRows[0][2].match(/レスポンス本文\(先頭200字\)=(.*)$/)[1];
+  assert.equal(loggedBody.length, 200, 'レスポンス本文は200字に切り詰められる');
+});
+
+test('determineStockStatuses_: 全件成功なら実行ログにWARNは記録されない', () => {
+  const { sandbox, sheetsData } = ctxWithSheets();
+  const items = [{ item: { manageNumber: 'A', variants: { s1: {} } } }];
+  sandbox.determineStockStatuses_(items, () => 5, { count: 0, cap: 200, capped: false, firstFailureLogged: false });
+  assert.equal(sheetsData['実行ログ'].filter((r) => r[1] === 'WARN').length, 0);
 });
 
 test('determineStockStatuses_: 200SKU上限に達したら以降のバリアントは呼ばずunknown、capped=trueになる', () => {
