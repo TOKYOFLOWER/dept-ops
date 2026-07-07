@@ -14,22 +14,31 @@
     --card:#ffffff;
     --leaf:#2e7d4f;         /* 鮮度の緑 */
     --amber:#c47f17;        /* 要注意の琥珀 */
+    --blue:#2b6cb0;         /* 承認待ちの青 */
     --line:#d8d5cb;
     --sub:#6b7268;
     --tag:#243c2e;          /* 木札の焦げ茶緑 */
   }
   *{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:16px}
   body{
     font-family:"IBM Plex Sans JP",sans-serif;
     background:var(--paper);color:var(--ink);
     padding:20px 16px 64px;
+    font-size:1rem; /* 16px基準。本文はこれ未満にしない */
   }
-  header{max-width:960px;margin:0 auto 20px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-  h1{font-family:"Zen Old Mincho",serif;font-weight:900;font-size:1.5rem;letter-spacing:.08em}
+  header{max-width:960px;margin:0 auto 14px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h1{font-family:"Zen Old Mincho",serif;font-weight:900;font-size:1.4rem;letter-spacing:.08em}
   h1 span{color:var(--leaf)}
-  #meta{font-size:.78rem;color:var(--sub)}
-  #pendingBadge{margin-left:auto;font-size:.8rem;font-weight:700;background:var(--amber);color:#fff;
-    border-radius:999px;padding:4px 12px;display:none}
+  #meta{font-size:.875rem;color:var(--sub)}
+
+  /* ---------- 今朝のサマリーバー ---------- */
+  #summaryBar{
+    max-width:960px;margin:0 auto 18px;background:var(--tag);color:#f2efe6;
+    border-radius:8px;padding:12px 16px;font-size:1rem;font-weight:700;
+    line-height:1.6;letter-spacing:.02em;
+  }
+  #summaryBar .seg{margin-right:10px;display:inline-block}
 
   main{max-width:960px;margin:0 auto;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
 
@@ -40,33 +49,91 @@
   /* 木札：縦書きの部署名ラベル */
   .tag{
     writing-mode:vertical-rl;font-family:"Zen Old Mincho",serif;font-weight:700;
-    background:var(--tag);color:#f2efe6;padding:14px 8px;font-size:.95rem;
+    background:var(--tag);color:#f2efe6;padding:14px 8px;font-size:1rem;
     letter-spacing:.28em;display:flex;align-items:center;justify-content:center;flex:0 0 auto;
   }
   .card.yellow .tag{background:var(--amber)}
   .body{padding:14px 16px;flex:1;min-width:0}
-  .status{font-size:.72rem;font-weight:700;letter-spacing:.1em;color:var(--leaf)}
+
+  /* ---------- 状況推移ドット列 ---------- */
+  .dots{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px;line-height:1}
+  .dots .dot{font-size:.9rem}
+  .dots .dotEmpty{font-size:.9rem;opacity:.35}
+
+  .status{font-size:.875rem;font-weight:700;letter-spacing:.06em;color:var(--leaf)}
   .card.yellow .status{color:var(--amber)}
-  .headline{font-family:"Zen Old Mincho",serif;font-weight:700;font-size:1.05rem;margin:4px 0 8px;line-height:1.4}
-  .report{font-size:.85rem;line-height:1.7;color:#333b35;white-space:pre-wrap}
-  .proposals{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
-  .proposal{font-size:.8rem;line-height:1.6;margin-bottom:6px}
-  .proposal b{color:var(--tag)}
-  .needs{font-size:.68rem;color:#fff;background:var(--amber);border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:1px}
-  .time{font-size:.7rem;color:var(--sub);margin-top:10px}
-  .histBtn{margin-top:8px;font-size:.75rem;background:none;border:1px solid var(--line);border-radius:4px;
-    padding:4px 10px;cursor:pointer;color:var(--sub);font-family:inherit}
+  .headline{font-family:"Zen Old Mincho",serif;font-weight:700;font-size:1.1rem;margin:4px 0 10px;line-height:1.5}
+
+  /* ---------- 根拠（折りたたみ） ---------- */
+  details.evidence{margin:8px 0;border-top:1px dashed var(--line);padding-top:8px}
+  details.evidence summary{
+    cursor:pointer;font-size:.9rem;color:var(--sub);font-weight:700;list-style:none;
+    display:flex;align-items:center;gap:4px;
+  }
+  details.evidence summary::-webkit-details-marker{display:none}
+  details.evidence summary::before{content:"▸";display:inline-block;transition:transform .15s}
+  details.evidence[open] summary::before{transform:rotate(90deg)}
+  details.evidence summary:focus-visible{outline:2px solid var(--leaf);outline-offset:2px}
+  .report{font-size:1rem;line-height:1.8;color:#333b35;white-space:pre-wrap;margin-top:8px}
+  .time{font-size:.875rem;color:var(--sub);margin-top:8px}
+
+  /* ---------- 今日のアクション ---------- */
+  .actions{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+  .actions h3{font-size:.9rem;color:var(--sub);margin-bottom:6px;font-weight:700}
+  .action{font-size:.95rem;line-height:1.7;margin-bottom:8px;padding:8px 10px;border-radius:6px}
+  .action b{display:block;margin-bottom:2px}
+  .action.approved{background:#eaf5ee;border:1px solid #bfe3cc}
+  .action.approved b{color:var(--leaf)}
+  .action.pendingApproval{background:#eef3fa;border:1px solid #c9d9ef}
+  .action.pendingApproval b{color:var(--blue)}
+  .action.info{background:#f7f6f1;border:1px solid var(--line)}
+  .action.info b{color:var(--tag)}
+
+  .histBtn{margin-top:10px;font-size:.9rem;background:none;border:1px solid var(--line);border-radius:4px;
+    padding:6px 12px;cursor:pointer;color:var(--sub);font-family:inherit}
   .histBtn:focus-visible{outline:2px solid var(--leaf);outline-offset:2px}
 
-  section#historyArea{max-width:960px;margin:24px auto 0;display:none}
-  section#historyArea h2{font-family:"Zen Old Mincho",serif;font-size:1.05rem;margin-bottom:10px}
-  .histItem{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:8px;font-size:.82rem;line-height:1.7}
-  .histItem .d{font-size:.7rem;color:var(--sub)}
+  /* ---------- 用語タップ説明 ---------- */
+  .term{
+    font:inherit;background:#eef0ea;border:1px solid var(--line);border-radius:3px;
+    padding:0 3px;cursor:pointer;color:inherit;border-bottom:1px dotted var(--sub);
+  }
+  .term:focus-visible{outline:2px solid var(--leaf);outline-offset:1px}
+  #tooltipPopup{
+    position:absolute;max-width:260px;background:var(--tag);color:#f2efe6;font-size:.875rem;
+    line-height:1.6;padding:10px 12px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:50;
+  }
+  #tooltipPopup button{
+    display:block;margin-top:6px;background:none;border:1px solid rgba(255,255,255,.5);color:#f2efe6;
+    border-radius:4px;padding:2px 8px;font-size:.875rem;cursor:pointer;font-family:inherit;
+  }
 
-  #stateBox{max-width:960px;margin:40px auto;text-align:center;color:var(--sub);font-size:.9rem}
+  /* ---------- 承認キュー ---------- */
+  section#approvalArea{max-width:960px;margin:28px auto 0}
+  section#approvalArea h2{font-family:"Zen Old Mincho",serif;font-size:1.15rem;margin-bottom:10px}
+  .apprTabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .apprTabBtn{
+    font:inherit;font-size:.9rem;background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:6px 16px;cursor:pointer;color:var(--sub);font-weight:700;
+  }
+  .apprTabBtn[aria-selected="true"]{background:var(--tag);color:#f2efe6;border-color:var(--tag)}
+  .apprTabBtn:focus-visible{outline:2px solid var(--leaf);outline-offset:2px}
+  .apprRow{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:8px}
+  .apprRow .dept{font-size:.875rem;color:var(--sub);font-weight:700}
+  .apprRow .title{font-size:1rem;font-weight:700;margin:2px 0 4px}
+  .apprRow .decided{font-size:.875rem;color:var(--sub)}
+  .apprRow .note{font-size:.875rem;color:var(--blue);margin-top:4px}
+  .apprEmpty{color:var(--sub);font-size:.95rem;padding:8px 0}
+
+  section#historyArea{max-width:960px;margin:24px auto 0;display:none}
+  section#historyArea h2{font-family:"Zen Old Mincho",serif;font-size:1.1rem;margin-bottom:10px}
+  .histItem{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:8px;font-size:.9rem;line-height:1.7}
+  .histItem .d{font-size:.875rem;color:var(--sub)}
+
+  #stateBox{max-width:960px;margin:40px auto;text-align:center;color:var(--sub);font-size:1rem}
   #stateBox button{margin-top:12px;padding:8px 20px;border:1px solid var(--line);background:var(--card);
-    border-radius:6px;cursor:pointer;font-family:inherit}
-  @media (max-width:420px){ body{padding:14px 10px 48px} h1{font-size:1.25rem} }
+    border-radius:6px;cursor:pointer;font-family:inherit;font-size:1rem}
+  @media (max-width:420px){ body{padding:14px 10px 48px} h1{font-size:1.2rem} }
   @media (prefers-reduced-motion:no-preference){
     .card{animation:rise .35s ease both}
     @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -77,14 +144,26 @@
 <header>
   <h1>朝の部署報告<span>｜</span>DEPT-OPS</h1>
   <div id="meta">読み込み中…</div>
-  <div id="pendingBadge"></div>
 </header>
+<div id="summaryBar" hidden></div>
 <main id="cards"></main>
+
+<section id="approvalArea">
+  <h2>承認キュー</h2>
+  <div class="apprTabs" role="tablist" aria-label="承認状態の切り替え">
+    <button type="button" class="apprTabBtn" data-tab="pending" role="tab" aria-selected="true">承認待ち</button>
+    <button type="button" class="apprTabBtn" data-tab="approved" role="tab" aria-selected="false">承認済み</button>
+    <button type="button" class="apprTabBtn" data-tab="rejected" role="tab" aria-selected="false">却下</button>
+  </div>
+  <div id="apprList"></div>
+</section>
+
 <section id="historyArea">
   <h2 id="histTitle"></h2>
   <div id="histList"></div>
 </section>
 <div id="stateBox" hidden></div>
+<div id="tooltipPopup" hidden role="tooltip"></div>
 
 <script src="config.js"></script>
 <script>
@@ -93,19 +172,37 @@
 const GAS_URL = (window.DEPT_OPS_CONFIG && window.DEPT_OPS_CONFIG.gasUrl) || "";
 const DATA_KEY = (window.DEPT_OPS_CONFIG && window.DEPT_OPS_CONFIG.dataKey) || "";
 
+/* 非エンジニアのスタッフ向け用語ヒント（タップで開く。titleのみに依存しない） */
+const GLOSSARY = {
+  "CTR": "クリック率のこと。検索結果に表示された回数のうち、実際にクリックされた割合です。",
+  "掲載順位": "検索結果で何番目に表示されたかです。数字が小さいほど上位に出ています。",
+  "表示回数": "検索結果にその言葉で表示された回数です（クリックされたかどうかは問いません）。",
+  "薬機法リスク語": "「治る」「効果があります」など、医薬品的な効き目を約束するような言い回しです。法律のルールに触れるおそれがあるため注意が必要です。",
+  "在庫API": "楽天のシステムから在庫数を確認するための仕組みです。",
+};
+
 const MOCK = {
   generated_at:new Date().toISOString(),
   depts:[{id:"market",name:"マーケティング部",enabled:true},{id:"seo",name:"SEO室",enabled:true},{id:"items",name:"商品管理部",enabled:true}],
   latest:{
-    market:{timestamp:new Date().toISOString(),dept_id:"market",status:"green",headline:"クーポン3本稼働中・異常なし",report:"送料無料クーポンの残り9日、利用数は堅調。マラソン対策は準備済み。（モック表示）",proposals:[{title:"母の日先行クーポン",detail:"4月中旬から早割10%を提案",needs_decision:true}]},
-    seo:{timestamp:new Date().toISOString(),dept_id:"seo",status:"yellow",headline:"「開店祝い 花」順位が前週比で下落",report:"クリック数が前週比-18%。前回提案の商品ページtitle修正は未実行の疑いあり。（モック表示）",proposals:[{title:"titleタグ修正の再提案",detail:"上位10商品のtitle刷新",needs_decision:false}]},
-    items:{timestamp:new Date().toISOString(),dept_id:"items",status:"green",headline:"全412商品スキャン・リスク語なし",report:"在庫ゼロ3件、説明文100字未満7件。薬機法リスク語の検出なし。（モック表示）",proposals:[]}
+    market:{timestamp:new Date().toISOString(),dept_id:"market",status:"green",headline:"クーポン3本稼働中・異常なし",report:"送料無料クーポンの残り9日、利用数は堅調。マラソン対策は準備済み。（モック表示）",proposals:[{title:"母の日先行クーポン",detail:"4月中旬から早割10%を提案",needs_decision:true,approval_id:"m-1"}]},
+    seo:{timestamp:new Date().toISOString(),dept_id:"seo",status:"yellow",headline:"「開店祝い 花」順位が前週比で下落",report:"クリック数が前週比-18%。CTRの低下と表示回数・掲載順位の悪化が同時に見られます。前回提案の商品ページtitle修正は未実行の疑いあり。（モック表示）",proposals:[{title:"titleタグ修正の再提案",detail:"上位10商品のtitle刷新",needs_decision:false}]},
+    items:{timestamp:new Date().toISOString(),dept_id:"items",status:"green",headline:"全412商品スキャン・リスク語なし",report:"在庫ゼロ3件、説明文100字未満7件。薬機法リスク語の検出なし。在庫APIは正常に取得できています。（モック表示）",proposals:[{title:"非公開商品3件の棚卸し",detail:"倉庫指定のまま長期放置されている商品の確認",needs_decision:true,approval_id:"m-2"}]}
   },
-  history:[],approvals:[{id:"m-1",status:"pending"}]
+  history:[
+    {dept_id:"market",timestamp:new Date(Date.now()-86400000).toISOString(),status:"green",headline:"前日の報告（モック）",report:"モック履歴"},
+    {dept_id:"seo",timestamp:new Date(Date.now()-86400000).toISOString(),status:"yellow",headline:"前日の報告（モック）",report:"モック履歴"},
+  ],
+  approvals:[
+    {id:"m-1",created:new Date().toISOString(),dept_id:"market",proposal:{title:"母の日先行クーポン",detail:"4月中旬から早割10%を提案"},status:"pending",decided_at:null},
+    {id:"m-2",created:new Date().toISOString(),dept_id:"items",proposal:{title:"非公開商品3件の棚卸し",detail:"倉庫指定のまま長期放置されている商品の確認"},status:"pending",decided_at:null},
+    {id:"m-3",created:new Date(Date.now()-172800000).toISOString(),dept_id:"seo",proposal:{title:"titleタグ修正の再提案",detail:"上位10商品のtitle刷新"},status:"approved",decided_at:new Date(Date.now()-86400000).toISOString()},
+  ]
 };
 
 const $=s=>document.querySelector(s);
 let DATA=null;
+let apprTab="pending";
 
 async function load(){
   $("#stateBox").hidden=true;
@@ -120,6 +217,7 @@ async function load(){
     render();
   }catch(e){
     $("#cards").innerHTML="";
+    $("#summaryBar").hidden=true;
     const box=$("#stateBox");
     box.hidden=false;
     box.innerHTML="データを取得できませんでした（"+e.message+"）。<br>通信環境とGASデプロイを確認してください。<br><button onclick='load()'>再読み込み</button>";
@@ -129,47 +227,180 @@ async function load(){
 
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
+/** 用語集の言葉をタップ可能な要素に置き換える（escされたテキストに対して行う） */
+function linkifyTerms(escapedText){
+  let out = escapedText;
+  Object.keys(GLOSSARY).forEach(term=>{
+    const escTerm = esc(term);
+    if(!out.includes(escTerm)) return;
+    out = out.split(escTerm).join('<button type="button" class="term" data-term="'+escTerm+'">'+escTerm+'</button>');
+  });
+  return out;
+}
+
+/** 全部署の状態を1行で要約する（純粋関数。テスト可能） */
+function buildSummaryText(depts, latest, approvals){
+  const enabled=(depts||[]).filter(d=>d.enabled);
+  let green=0, yellow=0, none=0;
+  enabled.forEach(d=>{
+    const r=latest && latest[d.id];
+    if(!r){ none++; return; }
+    if(r.status==="yellow") yellow++; else green++;
+  });
+  const pend=(approvals||[]).filter(a=>a.status==="pending").length;
+  const parts=[];
+  if(green) parts.push('<span class="seg">🟢 '+green+'部署 順調</span>');
+  if(yellow) parts.push('<span class="seg">🟡 '+yellow+'部署 要確認</span>');
+  if(none) parts.push('<span class="seg">⚪ '+none+'部署 報告待ち</span>');
+  parts.push('<span class="seg">⏳ 承認待ち '+(pend>0?pend+"件":"なし")+'</span>');
+  return parts.join('');
+}
+
+/** 直近days日分の状況推移をドット列（絵文字＋テキストラベル）で作る（純粋関数。テスト可能） */
+function buildDotsHtml(history, deptId, days){
+  days = days || 14;
+  const list=(history||[]).filter(h=>h.dept_id===deptId).slice(0, days);
+  if(!list.length) return "";
+  const chron=list.slice().reverse();
+  return '<div class="dots" aria-label="直近'+chron.length+'日の状況推移">'+chron.map(h=>{
+    const yellow=h.status==="yellow";
+    const emoji=yellow?"🟡":"🟢";
+    const label=yellow?"要確認":"順調";
+    const d=new Date(h.timestamp);
+    const dateStr=isNaN(d.getTime())?"":(d.getMonth()+1)+"/"+d.getDate()+" ";
+    return '<span class="dot" aria-label="'+esc(dateStr+label)+'">'+emoji+'</span>';
+  }).join('')+'</div>';
+}
+
+/** 提案1件を承認状態に応じたHTMLに変換する（却下はnullを返す＝非表示） */
+function renderAction(p, approvalsById){
+  if(!p.needs_decision){
+    return '<div class="action info"><b>💡 '+linkifyTerms(esc(p.title))+'</b>'+linkifyTerms(esc(p.detail))+'</div>';
+  }
+  const appr = p.approval_id ? approvalsById[p.approval_id] : null;
+  const status = appr ? appr.status : "pending";
+  if(status==="rejected") return null;
+  if(status==="approved"){
+    return '<div class="action approved"><b>✅ 実行OK：'+linkifyTerms(esc(p.title))+'</b>'+linkifyTerms(esc(p.detail))+'</div>';
+  }
+  return '<div class="action pendingApproval"><b>⏳ 社長の承認待ち：'+linkifyTerms(esc(p.title))+'</b>'+linkifyTerms(esc(p.detail))+'</div>';
+}
+
 function render(){
   const d=DATA;
   $("#meta").textContent="更新 "+new Date(d.generated_at).toLocaleString("ja-JP");
-  const pend=(d.approvals||[]).filter(a=>a.status==="pending").length;
-  const badge=$("#pendingBadge");
-  if(pend>0){badge.style.display="inline-block";badge.textContent="承認待ち "+pend+"件";}
-  else badge.style.display="none";
+
+  const summary=$("#summaryBar");
+  summary.hidden=false;
+  summary.innerHTML=buildSummaryText(d.depts, d.latest, d.approvals);
+
+  const approvalsById={};
+  (d.approvals||[]).forEach(a=>{ approvalsById[a.id]=a; });
 
   $("#cards").innerHTML=(d.depts||[]).filter(x=>x.enabled).map(dept=>{
     const r=d.latest?.[dept.id];
-    if(!r) return cardShell(dept.name,"green","まだ報告がありません","初回の朝サイクル実行をお待ちください。","","",dept.id);
-    const props=(r.proposals||[]).map(p=>
-      `<div class="proposal"><b>💡 ${esc(p.title)}</b>${p.needs_decision?'<span class="needs">要承認</span>':""}<br>${esc(p.detail)}</div>`).join("");
-    return cardShell(dept.name,r.status,esc(r.headline),esc(r.report),
-      props?`<div class="proposals">${props}</div>`:"",
-      `<div class="time">${new Date(r.timestamp).toLocaleString("ja-JP")}</div>`,dept.id);
+    const dots=buildDotsHtml(d.history, dept.id, 14);
+    if(!r) return cardShell(dept.name,"green",dots,"まだ報告がありません","初回の朝サイクル実行をお待ちください。","",[],dept.id);
+    const actionsHtml=(r.proposals||[]).map(p=>renderAction(p, approvalsById)).filter(Boolean);
+    return cardShell(dept.name,r.status,dots,esc(r.headline),esc(r.report),
+      new Date(r.timestamp).toLocaleString("ja-JP"),actionsHtml,dept.id);
   }).join("");
+
+  renderApprovals();
 }
 
-function cardShell(name,status,headline,report,proposals,time,id){
-  return `<article class="card ${status==="yellow"?"yellow":""}">
+function cardShell(name,status,dots,headline,report,timeStr,actionsHtml,id){
+  const yellow=status==="yellow";
+  const statusLabel=yellow?"● 要確認":"● 順調";
+  const actionsBlock=actionsHtml.length
+    ? '<div class="actions"><h3>今日のアクション</h3>'+actionsHtml.join('')+'</div>'
+    : '';
+  const evidence= report
+    ? '<details class="evidence"><summary>くわしい根拠を見る</summary>'
+      + '<div class="report">'+linkifyTerms(report)+'</div>'
+      + (timeStr?'<div class="time">データ取得: '+esc(timeStr)+'</div>':'')
+      + '</details>'
+    : '';
+  return `<article class="card ${yellow?"yellow":""}">
     <div class="tag">${esc(name)}</div>
     <div class="body">
-      <div class="status">${status==="yellow"?"● 要確認":"● 順調"}</div>
+      ${dots}
+      <div class="status">${statusLabel}</div>
       <div class="headline">${headline}</div>
-      <div class="report">${report}</div>
-      ${proposals}${time}
+      ${evidence}
+      ${actionsBlock}
       <button class="histBtn" onclick="showHistory('${id}','${esc(name)}')">履歴を見る</button>
     </div></article>`;
+}
+
+/** 承認キューをタブに応じて一覧描画する */
+function renderApprovals(){
+  const depts=(DATA.depts||[]);
+  const deptName=id=>{ const f=depts.find(x=>x.id===id); return f?f.name:id; };
+  const rows=(DATA.approvals||[]).filter(a=>a.status===apprTab);
+
+  document.querySelectorAll(".apprTabBtn").forEach(btn=>{
+    btn.setAttribute("aria-selected", btn.dataset.tab===apprTab ? "true" : "false");
+  });
+
+  const list=$("#apprList");
+  if(!rows.length){
+    list.innerHTML='<div class="apprEmpty">'+(apprTab==="pending"?"承認待ちの提案はありません。":apprTab==="approved"?"承認済みの提案はまだありません。":"却下された提案はありません。")+'</div>';
+    return;
+  }
+  list.innerHTML=rows.map(a=>{
+    const title=esc(a.proposal && a.proposal.title || "（タイトルなし）");
+    const decided=a.decided_at?('決裁日時: '+esc(new Date(a.decided_at).toLocaleString("ja-JP"))):"";
+    const note=apprTab==="pending"?'<div class="note">📨 社長のLINE WORKSに依頼済み</div>':"";
+    return '<div class="apprRow"><div class="dept">'+esc(deptName(a.dept_id))+'</div>'
+      +'<div class="title">'+title+'</div>'
+      +(decided?'<div class="decided">'+decided+'</div>':'')
+      +note+'</div>';
+  }).join('');
 }
 
 function showHistory(id,name){
   const list=(DATA.history||[]).filter(h=>h.dept_id===id);
   $("#histTitle").textContent=name+" の報告履歴";
   $("#histList").innerHTML=list.length?list.map(h=>
-    `<div class="histItem"><div class="d">${new Date(h.timestamp).toLocaleString("ja-JP")} ${h.status==="yellow"?"🟡":"🟢"}</div>
+    `<div class="histItem"><div class="d">${new Date(h.timestamp).toLocaleString("ja-JP")} ${h.status==="yellow"?"🟡 要確認":"🟢 順調"}</div>
      <b>${esc(h.headline)}</b><br>${esc(h.report)}</div>`).join("")
     :'<div class="histItem">履歴がまだありません。</div>';
   $("#historyArea").style.display="block";
   $("#historyArea").scrollIntoView({behavior:"smooth"});
 }
+
+/* ---------- 用語タップの開閉（title属性ではなくクリック/タップで開くポップアップ） ---------- */
+function showTooltip(anchorEl, text){
+  const tip=$("#tooltipPopup");
+  tip.innerHTML=esc(text)+'<button type="button" onclick="hideTooltip()">閉じる</button>';
+  tip.hidden=false;
+  const r=anchorEl.getBoundingClientRect();
+  const top=(window.scrollY||0)+r.bottom+6;
+  const left=Math.max(8,(window.scrollX||0)+r.left);
+  tip.style.top=top+"px";
+  tip.style.left=left+"px";
+}
+function hideTooltip(){
+  const tip=$("#tooltipPopup");
+  if(tip) tip.hidden=true;
+}
+
+document.addEventListener("click",e=>{
+  const termBtn=e.target.closest && e.target.closest(".term");
+  if(termBtn){
+    showTooltip(termBtn, GLOSSARY[termBtn.dataset.term]||"");
+    e.stopPropagation();
+    return;
+  }
+  const tabBtn=e.target.closest && e.target.closest(".apprTabBtn");
+  if(tabBtn){
+    apprTab=tabBtn.dataset.tab;
+    renderApprovals();
+    return;
+  }
+  if(!(e.target.closest && e.target.closest("#tooltipPopup"))) hideTooltip();
+});
 
 load();
 </script>
