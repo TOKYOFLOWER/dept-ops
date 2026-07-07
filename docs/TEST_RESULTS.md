@@ -3,25 +3,26 @@
 自動テストは `npm install && npm test` で誰でも再実行できる（Node.js 20+）。
 実行方法・実装の考え方は docs/DECISIONS.md の3を参照。
 
-最終実行結果（2026-07-07時点、スタッフ向けUI刷新・コレクター修正後）:
+最終実行結果（2026-07-08時点、collectors.jsの公式仕様確定修正後）:
 
 ```
-tests 83
+tests 94
 suites 0
-pass 83
+pass 94
 fail 0
 cancelled 0
 skipped 0
 todo 0
 ```
 
-内訳: claude.test.mjs 10 / collectors.test.mjs 16（在庫API連携・クーポンPOST化・
-本日の日付の検証を含む） / notify.test.mjs 7 / orchestrator.test.mjs 6（approval_id突き合わせ
-1件を含む） / setup.test.mjs 4 / webapi.test.mjs 14（DATA_KEY関連6件を含む） /
-dashboard.test.mjs 26（サマリーバー・3層カード・用語タップ・承認キュータブ・状況推移ドット・
-14pxアクセシビリティ検査を含む） = 計83。
+内訳: claude.test.mjs 10 / collectors.test.mjs 27（CouponAPI 1.0のXML解析・discountType変換・
+couponEndDateフィルタ、在庫API 2.1のvariant単位判定・200SKU上限共有・404/403フォールバックを含む） /
+notify.test.mjs 7 / orchestrator.test.mjs 6（approval_id突き合わせ1件を含む） / setup.test.mjs 4 /
+webapi.test.mjs 14（DATA_KEY関連6件を含む） / dashboard.test.mjs 26（サマリーバー・3層カード・
+用語タップ・承認キュータブ・状況推移ドット・14pxアクセシビリティ検査を含む） = 計94。
 テストコードは tests/ 配下（`sandbox.mjs` が gas/*.js を実ファイルのままNodeの `vm` 上に
-ロードし、GASビルトインを最小スタブに差し替える。詳細はdocs/DECISIONS.mdの3を参照）。
+ロードし、GASビルトインを最小スタブに差し替える。詳細はdocs/DECISIONS.mdの3を参照。
+XMLパース検証用に jsdomの`DOMParser`を利用した`XmlService`スタブも追加した）。
 
 ---
 
@@ -197,26 +198,39 @@ github.com/TOKYOFLOWER/dept-ops として公開リポジトリで運用するに
   7. 各カード上部の🟢🟡ドット列にカーソルを当てる（またはスクリーンリーダーで読み上げる）と
      日付とステータスのラベルが確認できること
 
-### タスクB: gas/collectors.js修正
+### タスクB: gas/collectors.js修正（2026-07-07・初回。仮説実装 → 下記2026-07-08で公式仕様に置き換え済み）
 
-- **collectItems_**: 在庫の有無を ItemAPI 2.0 (`items/search`) からではなく、新設した
-  `fetchInventoryMap_`（在庫API 2.1想定）から取得するように変更。在庫API呼び出しが失敗した場合は
-  それ以降のページも在庫チェックをスキップし、「在庫不明」件数として異常カウント（在庫ゼロ件数）
-  から除外する（全件在庫ゼロ誤検知の再発防止）。
-  **（仮説）実際のRakuten RMS 在庫API 2.1のエンドポイントパス・リクエスト/レスポンス形式は
-  ドキュメントを直接参照できず検証していない。`CONF.RMS_BASE + '/es/2.1/inventories/manage-numbers/batch/get'`
-  にPOSTでmanageNumbers配列を送る形を仮に実装した。実環境で404/403等になる場合は
-  `fetchInventoryMap_`のURL・リクエスト形式を実際の仕様に合わせて調整すること。**
-- **collectMarket_**: クーポン検索をGET+クエリ文字列からPOST+JSONボディに変更（ItemAPI等
-  RMS 2.0系のAPIはPOST+JSONボディが一般的なパターンであるため、GETでの404を疑い見直した。
-  **（仮説）実際の原因がこれと異なる場合は再度エンドポイントを調査すること。**）。
-  失敗時は `jsonFetch_`（config.js）がHTTPステータスコードと試行URLをエラーメッセージに
-  含めるため、collectMarket_の出力にもそのまま反映されるようにした。
-- 3コレクターすべての出力冒頭に「# 本日の日付（JST）: yyyy-MM-dd (E)」を追加（時系列幻覚防止）。
-- 上記はすべて `tests/collectors.test.mjs`（16件）で自動検証済み。実際のRMS APIとの通信を
-  伴う最終確認は、Script Propertiesに実認証情報を設定した環境でGASエディタから
-  `test_runMarketOnly()` 等を実行し、出力テキストに意図した内容（在庫不明の除外・404時の
-  URL/コード表示・日付行）が含まれることを目視確認すること。
+初回実装は在庫API・CouponAPIとも仕様未確認の仮説だった。以下の「公式仕様に基づく確定修正」節が
+最新版。3コレクターすべての出力冒頭に「# 本日の日付（JST）: yyyy-MM-dd (E)」を追加した点は
+初回・確定版とも共通（時系列幻覚防止）。
+
+### タスクB-2: gas/collectors.js 公式仕様に基づく確定修正（2026-07-08・仮説を解消）
+
+- **collectMarket_（クーポン）**: `GET https://api.rms.rakuten.co.jp/es/1.0/coupon/search`
+  （CouponAPI 1.0。2.0は存在しない）。パラメータは `couponName/couponCode/itemUrl/
+  couponStartDate/couponEndDate/hits/page` のみ送信し、仕様に存在しない `couponStatus` は送らない。
+  レスポンスはXML（`text/xml`）のため `XmlService` でパース（`parseCouponXml_`）し、
+  `result > coupons > coupon` の `couponName / couponEndDate / discountType(1:定額値引 2:定率 4:送料無料) /
+  discountFactor / issueCount / getCount / availCount` を読み取る。`couponEndDate` が現在時刻以降のものだけを
+  有効クーポンとして「残り日数・割引内容（`describeDiscount_`）・発行/取得/利用数」の行に整形する
+  （`summarizeCoupons_`）。有効なクーポンが0件の場合はその旨を出力する。
+- **fetchVariantQuantity_（在庫、旧fetchInventoryMap_を置き換え）**: `GET https://api.rms.rakuten.co.jp/
+  es/2.1/inventories/manage-numbers/{manageNumber}/variants/{variantId}` でバリアント単位に取得し、
+  JSONレスポンスの `quantity` を在庫数として使う。`items/search` の結果から manageNumber と
+  variantsのキー（SKU）を集めてこのエンドポイントを呼ぶ（`determineStockStatuses_`）。
+  実行時間対策として在庫API呼び出しは実行全体で最大200バリアントに打ち切り、打ち切り時は
+  報告に「在庫確認は200SKUまでサンプリングしています」と明記する。404/403等の例外を返したSKUは
+  「在庫不明」としてカウントから除外し（在庫ゼロと誤判定しない）、除外分は総数から独立して
+  「在庫不明」件数として報告する。
+- どちらも失敗時は `fetchText_`（config.js。旧`jsonFetch_`から共通処理を切り出したもの）が
+  HTTPステータスコードと試行URLをエラーメッセージに含めるため、collectMarket_/collectItems_の
+  出力にもそのまま反映される。
+- 上記はすべて `tests/collectors.test.mjs`（27件、XML解析・discountType変換・couponEndDate
+  フィルタ・variant単位の在庫判定・200SKU上限共有・エラー時のHTTPコード/URL表示を含む）で
+  自動検証済み。`tests/sandbox.mjs` に jsdomの`DOMParser`を利用した`XmlService.parse()`スタブを追加した。
+  実際のRMS APIとの通信を伴う最終確認は、Script Propertiesに実認証情報を設定した環境でGASエディタから
+  `test_runMarketOnly()` 等を実行し、出力テキストに意図した内容（有効クーポンの整形・在庫不明の除外・
+  200SKU注記・404時のURL/コード表示・日付行）が含まれることを目視確認すること。
 
 ## 実データでの1サイクル確認（要件定義書9章 Definition of Done）
 

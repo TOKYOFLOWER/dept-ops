@@ -56,12 +56,23 @@ function hmacSignWithSecret_(payload, secret) {
   return sig.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
 }
 
-function jsonFetch_(url, options) {
+/** HTTP GET/POST共通：失敗時は HTTPステータスコードと試行URLを含む例外を投げる */
+function fetchText_(url, options) {
   const res = UrlFetchApp.fetch(url, Object.assign({ muteHttpExceptions: true }, options || {}));
   const code = res.getResponseCode();
   const text = res.getContentText();
   if (code < 200 || code >= 300) {
     throw new Error('HTTP ' + code + ' ' + url + ' :: ' + text.slice(0, 300));
   }
+  return text;
+}
+
+function jsonFetch_(url, options) {
+  const text = fetchText_(url, options);
   return text ? JSON.parse(text) : {};
+}
+
+/** XML応答用（RMS CouponAPI 1.0 等）。パースはXmlServiceを使う呼び出し側で行う */
+function xmlFetch_(url, options) {
+  return fetchText_(url, options);
 }

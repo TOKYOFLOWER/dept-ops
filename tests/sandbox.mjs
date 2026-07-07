@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GAS_DIR = path.resolve(__dirname, '../gas');
@@ -12,6 +13,31 @@ const GAS_DIR = path.resolve(__dirname, '../gas');
 function base64url(input) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input), 'utf8');
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// GASのXmlService.Elementの最小サブセット（getChild/getChildren/getChildText/getText）を
+// jsdomのDOMParserが返すXML DOMの上にラップして再現する。
+function wrapXmlElement(domEl) {
+  if (!domEl) return null;
+  return {
+    getChild(name) {
+      for (const child of Array.from(domEl.children)) {
+        if (child.tagName === name) return wrapXmlElement(child);
+      }
+      return null;
+    },
+    getChildren(name) {
+      return Array.from(domEl.children)
+        .filter((child) => !name || child.tagName === name)
+        .map(wrapXmlElement);
+    },
+    getChildText(name) {
+      const child = this.getChild(name);
+      return child ? child.getText() : null;
+    },
+    getText() { return domEl.textContent; },
+    getName() { return domEl.tagName; },
+  };
 }
 
 export function buildSandbox(scriptPropsOverrides) {
@@ -93,6 +119,16 @@ export function buildSandbox(scriptPropsOverrides) {
       },
     },
     ScriptApp: { getOAuthToken() { return 'fake-oauth-token'; } },
+    XmlService: {
+      parse(xmlText) {
+        const dom = new JSDOM();
+        const doc = new dom.window.DOMParser().parseFromString(xmlText, 'application/xml');
+        const parserError = doc.getElementsByTagName('parsererror')[0];
+        if (parserError) throw new Error('XmlService.parse: XML解析エラー: ' + parserError.textContent);
+        const root = doc.documentElement;
+        return { getRootElement() { return wrapXmlElement(root); } };
+      },
+    },
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);

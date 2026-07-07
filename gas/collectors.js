@@ -17,42 +17,73 @@ function todayLine_() {
 }
 
 // ---------- マーケティング部: クーポン状況 ----------
-// 仮説: CouponAPI 2.0 の検索はItemAPI 2.0と同様POST+JSONボディ形式（GET+クエリ文字列は404の原因になり得るため見直し）。
-// 実際のRMS仕様が異なる場合はCONF.RMS_BASE以下のパス・メソッドをここで調整すること。
+// 公式仕様: クーポンAPI 1.0（2.0は存在しない） GET https://api.rms.rakuten.co.jp/es/1.0/coupon/search
+// パラメータ: couponName/couponCode/itemUrl/couponStartDate/couponEndDate/hits/page のみ（couponStatusは非対応）。
+// レスポンスはXML（text/xml）。result > coupons > coupon を読む。
 function collectMarket_() {
-  const url = CONF.RMS_BASE + '/es/2.0/coupon/search';
-  const requestBody = { couponStatus: 'ACTIVE', hits: 30 };
-  let lines = [todayLine_(), '# 本日のクーポン状況（RMS CouponAPI 2.0）', '# 照会URL: ' + url];
+  const url = CONF.RMS_BASE + '/es/1.0/coupon/search?hits=30&page=1';
+  let lines = [todayLine_(), '# 本日のクーポン状況（RMS CouponAPI 1.0）', '# 照会URL: ' + url];
   try {
-    const data = jsonFetch_(url, {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { Authorization: rmsAuthHeader_() },
-      payload: JSON.stringify(requestBody),
-    });
-    const coupons = (data.couponList || data.coupons || []);
+    const xmlText = xmlFetch_(url, { method: 'get', headers: { Authorization: rmsAuthHeader_() } });
+    const coupons = parseCouponXml_(xmlText);
     lines = lines.concat(summarizeCoupons_(coupons, new Date()));
   } catch (e) {
-    // e.message には jsonFetch_ が付与したHTTPステータスコードと試行URLが含まれる（config.js参照）
+    // e.message には fetchText_ が付与したHTTPステータスコードと試行URLが含まれる（config.js参照）
     lines.push('（CouponAPI取得エラー: ' + e.message + '）');
-    lines.push('（注記: 404の場合はAPIバージョン・パスの設定を見直してください）');
   }
   lines.push('');
   lines.push('楽天イベントのカレンダーはあなたの知識で補完し、直近イベントへの対応状況を推定してください。');
   return lines.join('\n');
 }
 
-/** クーポン一覧 → 報告用テキスト行（純粋関数。モックデータでテスト可能） */
+/** CouponAPI 1.0 のXML応答を { couponName, couponEndDate, discountType, discountFactor, issueCount, getCount, availCount } の配列にパースする */
+function parseCouponXml_(xmlText) {
+  const doc = XmlService.parse(xmlText);
+  const root = doc.getRootElement();
+  const couponsEl = root.getChild('coupons');
+  const couponEls = couponsEl ? couponsEl.getChildren('coupon') : [];
+  return couponEls.map(function (el) {
+    return {
+      couponName: el.getChildText('couponName'),
+      couponEndDate: el.getChildText('couponEndDate'),
+      discountType: el.getChildText('discountType'),
+      discountFactor: el.getChildText('discountFactor'),
+      issueCount: el.getChildText('issueCount'),
+      getCount: el.getChildText('getCount'),
+      availCount: el.getChildText('availCount'),
+    };
+  });
+}
+
+/** discountType(1:定額値引 2:定率 4:送料無料) を割引内容の文言に変換する */
+function describeDiscount_(discountType, discountFactor) {
+  const t = String(discountType);
+  if (t === '1') return discountFactor + '円引き';
+  if (t === '2') return discountFactor + '%OFF';
+  if (t === '4') return '送料無料';
+  return '不明(discountType=' + discountType + ')';
+}
+
+function fmtCount_(v) {
+  return v == null || v === '' ? '不明' : v;
+}
+
+/**
+ * クーポン一覧 → 報告用テキスト行（純粋関数。モックデータでテスト可能）
+ * couponEndDate が現在時刻以降のものだけを有効クーポンとして扱う。
+ */
 function summarizeCoupons_(coupons, now) {
-  if (!coupons || !coupons.length) return ['有効なクーポンが1件もありません。'];
-  return coupons.map(function (c) {
-    const cp = c.coupon || c;
-    const end = cp.couponEndDate ? new Date(cp.couponEndDate) : null;
-    const daysLeft = end ? Math.ceil((end - now) / 86400000) : null;
-    return '- ' + (cp.couponName || cp.couponCode) +
-      ' / 割引: ' + (cp.discountFactor || cp.discountType || '不明') +
-      ' / 残り' + (daysLeft === null ? '?' : daysLeft) + '日' +
-      ' / 利用数: ' + (cp.usedCount != null ? cp.usedCount : '不明');
+  const active = (coupons || []).filter(function (c) {
+    const end = c.couponEndDate ? new Date(c.couponEndDate) : null;
+    return end && !isNaN(end.getTime()) && end.getTime() >= now.getTime();
+  });
+  if (!active.length) return ['有効なクーポンが1件もありません。'];
+  return active.map(function (c) {
+    const end = new Date(c.couponEndDate);
+    const daysLeft = Math.ceil((end - now) / 86400000);
+    return '- ' + c.couponName + ' / ' + describeDiscount_(c.discountType, c.discountFactor) +
+      ' / 残り' + daysLeft + '日' +
+      ' / 発行' + fmtCount_(c.issueCount) + '・取得' + fmtCount_(c.getCount) + '・利用' + fmtCount_(c.availCount);
   });
 }
 
@@ -108,15 +139,17 @@ function formatSeoComparison_(curRows, prevRows) {
 }
 
 // ---------- 商品管理部: 全商品スキャン ----------
-// 在庫の有無は ItemAPI 2.0 (items/search) には含まれないため、在庫API 2.1 (inventories) から取得する。
-// 在庫API権限がない環境では「在庫不明」として異常カウントから除外し、全件在庫ゼロ誤検知を防止する。
+// 在庫の有無は ItemAPI 2.0 (items/search) には含まれないため、公式仕様の在庫API 2.1
+// （inventories.variants.get: GET /es/2.1/inventories/manage-numbers/{manageNumber}/variants/{variantId}）
+// でmanageNumber×variantId単位に取得する。実行時間対策として最大200バリアントで打ち切る。
+var INVENTORY_VARIANT_CAP = 200;
+
 function collectItems_() {
   let lines = [todayLine_(), '# 商品スキャン結果（RMS ItemAPI 2.0 + 在庫API 2.1）'];
   const stats = { total: 0, noStock: 0, stockUnknown: 0, shortDesc: 0, noImage: 0, hidden: 0, riskWords: [] };
   const RISK = ['治る', '治す', '効能', '効果があります', '医薬', 'アンチエイジング', '痩せる'];
   let cursor = null, pages = 0;
-  let inventoryOk = true;
-  let inventoryErrorMessage = '';
+  const capState = { count: 0, cap: INVENTORY_VARIANT_CAP, capped: false };
 
   try {
     do {
@@ -124,27 +157,17 @@ function collectItems_() {
       const data = jsonFetch_(url, { headers: { Authorization: rmsAuthHeader_() } });
       const items = data.results || [];
 
-      let inventoryMap = null;
-      if (inventoryOk && items.length) {
-        try {
-          inventoryMap = fetchInventoryMap_(items.map(function (r) { return (r.item || r).manageNumber; }));
-        } catch (e) {
-          inventoryOk = false;
-          inventoryErrorMessage = e.message;
-        }
-      }
+      const stockStatus = determineStockStatuses_(items, fetchVariantQuantity_, capState);
+      aggregateItemStats_(items, stats, RISK, stockStatus);
 
-      aggregateItemStats_(items, stats, RISK, inventoryOk ? inventoryMap : null);
       cursor = data.nextCursorMark && items.length ? data.nextCursorMark : null;
       pages++;
     } while (cursor && pages < 20); // 最大2000商品
 
     lines.push('総商品数: ' + stats.total + '（スキャン' + pages + 'ページ）');
-    if (inventoryOk) {
-      lines.push('在庫ゼロ: ' + stats.noStock + '件 / 在庫不明: ' + stats.stockUnknown + '件 / 説明文100字未満: ' + stats.shortDesc + '件 / 画像なし: ' + stats.noImage + '件 / 非公開: ' + stats.hidden + '件');
-    } else {
-      lines.push('（在庫API 2.1が利用できないため、在庫状況はすべて「在庫不明」として異常カウントから除外しています。詳細: ' + inventoryErrorMessage + '）');
-      lines.push('在庫不明: ' + stats.stockUnknown + '件（在庫ゼロ件数は判定していません） / 説明文100字未満: ' + stats.shortDesc + '件 / 画像なし: ' + stats.noImage + '件 / 非公開: ' + stats.hidden + '件');
+    lines.push('在庫ゼロ: ' + stats.noStock + '件 / 在庫不明: ' + stats.stockUnknown + '件 / 説明文100字未満: ' + stats.shortDesc + '件 / 画像なし: ' + stats.noImage + '件 / 非公開: ' + stats.hidden + '件');
+    if (capState.capped) {
+      lines.push('（在庫確認は200SKUまでサンプリングしています。それ以降の商品は在庫チェックを省略し「在庫不明」に計上しています）');
     }
     lines.push('薬機法リスク語検出: ' + (stats.riskWords.length ? stats.riskWords.join(', ') : 'なし'));
   } catch (e) {
@@ -154,44 +177,60 @@ function collectItems_() {
 }
 
 /**
- * 在庫API 2.1（仮説: エンドポイント形式は要検証。実仕様が異なる場合はここを調整すること）
- * manageNumberの配列を渡し、{ manageNumber: 在庫数 } のマップを返す。
+ * 在庫API 2.1: manageNumber×variantId 単位で在庫数(quantity)を取得する。
+ * GET /es/2.1/inventories/manage-numbers/{manageNumber}/variants/{variantId}
  */
-function fetchInventoryMap_(manageNumbers) {
-  const targets = (manageNumbers || []).filter(Boolean);
-  if (!targets.length) return {};
-  const url = CONF.RMS_BASE + '/es/2.1/inventories/manage-numbers/batch/get';
-  const data = jsonFetch_(url, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: rmsAuthHeader_() },
-    payload: JSON.stringify({ manageNumbers: targets }),
+function fetchVariantQuantity_(manageNumber, variantId) {
+  const url = CONF.RMS_BASE + '/es/2.1/inventories/manage-numbers/' +
+    encodeURIComponent(manageNumber) + '/variants/' + encodeURIComponent(variantId);
+  const data = jsonFetch_(url, { method: 'get', headers: { Authorization: rmsAuthHeader_() } });
+  return data.quantity;
+}
+
+/**
+ * 商品ごとの在庫状況（'in'|'out'|'unknown'）を、バリアントごとの在庫API呼び出しで判定する。
+ * capState（{count, cap, capped}）は複数ページ・複数商品にまたがって共有し、上限到達後は
+ * 以降のバリアントを呼び出さず全て'unknown'扱いにする（実行時間対策）。
+ * fetchQuantity(manageNumber, variantId) が投げた例外（404/403等）はそのSKUを在庫不明として無視する。
+ */
+function determineStockStatuses_(items, fetchQuantity, capState) {
+  const result = {};
+  (items || []).forEach(function (r) {
+    const it = r.item || r;
+    const variantIds = it.variants ? Object.keys(it.variants) : [];
+    let anyKnown = false;
+    let anyInStock = false;
+    variantIds.forEach(function (vid) {
+      if (capState.capped) return;
+      if (capState.count >= capState.cap) { capState.capped = true; return; }
+      capState.count++;
+      try {
+        const qty = fetchQuantity(it.manageNumber, vid);
+        if (qty != null) {
+          anyKnown = true;
+          if (qty > 0) anyInStock = true;
+        }
+      } catch (e) {
+        // 404/403等はそのSKUを在庫不明として扱う（除外）。他のエラーも同様に安全側へ倒す。
+      }
+    });
+    result[it.manageNumber] = !anyKnown ? 'unknown' : (anyInStock ? 'in' : 'out');
   });
-  const map = {};
-  (data.inventories || data.results || []).forEach(function (inv) {
-    const q = inv.mergedQuantity != null ? inv.mergedQuantity : (inv.quantity != null ? inv.quantity : null);
-    map[inv.manageNumber] = q;
-  });
-  return map;
+  return result;
 }
 
 /**
  * 商品ページ1件分の集計を stats に加算（純粋関数。モックデータでテスト可能）
- * inventoryMap: { manageNumber: 在庫数 } を渡すと在庫ゼロ判定を行う。
- * null を渡すと在庫API権限なしとみなし、全件 stockUnknown に計上する（在庫ゼロの誤検知を防止）。
+ * stockStatusByManageNumber: { manageNumber: 'in'|'out'|'unknown' }
  */
-function aggregateItemStats_(items, stats, RISK, inventoryMap) {
+function aggregateItemStats_(items, stats, RISK, stockStatusByManageNumber) {
   if (stats.stockUnknown == null) stats.stockUnknown = 0;
   (items || []).forEach(function (r) {
     const it = r.item || r;
     stats.total++;
-    if (inventoryMap) {
-      const q = inventoryMap[it.manageNumber];
-      if (q == null) stats.stockUnknown++;
-      else if (q <= 0) stats.noStock++;
-    } else {
-      stats.stockUnknown++;
-    }
+    const status = stockStatusByManageNumber ? stockStatusByManageNumber[it.manageNumber] : 'unknown';
+    if (status === 'out') stats.noStock++;
+    else if (status !== 'in') stats.stockUnknown++;
     const desc = ((it.productDescription && (it.productDescription.pc || it.productDescription.sp)) || '');
     if (desc.length < 100) stats.shortDesc++;
     if (!(it.images && it.images.length)) stats.noImage++;
