@@ -11,19 +11,33 @@ function collectFor_(deptId) {
   }
 }
 
+/** 全コレクター共通：出力冒頭に付ける「本日の日付」行（時系列幻覚防止） */
+function todayLine_() {
+  return '# 本日の日付（JST）: ' + Utilities.formatDate(new Date(), 'JST', 'yyyy-MM-dd (E)');
+}
+
 // ---------- マーケティング部: クーポン状況 ----------
+// 仮説: CouponAPI 2.0 の検索はItemAPI 2.0と同様POST+JSONボディ形式（GET+クエリ文字列は404の原因になり得るため見直し）。
+// 実際のRMS仕様が異なる場合はCONF.RMS_BASE以下のパス・メソッドをここで調整すること。
 function collectMarket_() {
-  const url = CONF.RMS_BASE + '/es/2.0/coupon/search?couponStatus=ACTIVE&hits=30';
-  let lines = ['# 本日のクーポン状況（RMS CouponAPI）'];
+  const url = CONF.RMS_BASE + '/es/2.0/coupon/search';
+  const requestBody = { couponStatus: 'ACTIVE', hits: 30 };
+  let lines = [todayLine_(), '# 本日のクーポン状況（RMS CouponAPI 2.0）', '# 照会URL: ' + url];
   try {
-    const data = jsonFetch_(url, { headers: { Authorization: rmsAuthHeader_() } });
+    const data = jsonFetch_(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: rmsAuthHeader_() },
+      payload: JSON.stringify(requestBody),
+    });
     const coupons = (data.couponList || data.coupons || []);
     lines = lines.concat(summarizeCoupons_(coupons, new Date()));
   } catch (e) {
+    // e.message には jsonFetch_ が付与したHTTPステータスコードと試行URLが含まれる（config.js参照）
     lines.push('（CouponAPI取得エラー: ' + e.message + '）');
+    lines.push('（注記: 404の場合はAPIバージョン・パスの設定を見直してください）');
   }
   lines.push('');
-  lines.push('# 今日の日付: ' + Utilities.formatDate(new Date(), 'JST', 'yyyy-MM-dd (E)'));
   lines.push('楽天イベントのカレンダーはあなたの知識で補完し、直近イベントへの対応状況を推定してください。');
   return lines.join('\n');
 }
@@ -68,7 +82,7 @@ function collectSeo_() {
     ).rows || [];
   }
 
-  let lines = ['# Search Console 直近7日 vs 前週（上位クエリ）'];
+  let lines = [todayLine_(), '# Search Console 直近7日 vs 前週（上位クエリ）'];
   try {
     const cur = query(start7, end);
     const prev = query(prevStart, prevEnd);
@@ -94,23 +108,44 @@ function formatSeoComparison_(curRows, prevRows) {
 }
 
 // ---------- 商品管理部: 全商品スキャン ----------
+// 在庫の有無は ItemAPI 2.0 (items/search) には含まれないため、在庫API 2.1 (inventories) から取得する。
+// 在庫API権限がない環境では「在庫不明」として異常カウントから除外し、全件在庫ゼロ誤検知を防止する。
 function collectItems_() {
-  let lines = ['# 商品スキャン結果（RMS ItemAPI 2.0）'];
-  const stats = { total: 0, noStock: 0, shortDesc: 0, noImage: 0, hidden: 0, riskWords: [] };
+  let lines = [todayLine_(), '# 商品スキャン結果（RMS ItemAPI 2.0 + 在庫API 2.1）'];
+  const stats = { total: 0, noStock: 0, stockUnknown: 0, shortDesc: 0, noImage: 0, hidden: 0, riskWords: [] };
   const RISK = ['治る', '治す', '効能', '効果があります', '医薬', 'アンチエイジング', '痩せる'];
   let cursor = null, pages = 0;
+  let inventoryOk = true;
+  let inventoryErrorMessage = '';
 
   try {
     do {
       let url = CONF.RMS_BASE + '/es/2.0/items/search?hits=100' + (cursor ? '&cursorMark=' + encodeURIComponent(cursor) : '');
       const data = jsonFetch_(url, { headers: { Authorization: rmsAuthHeader_() } });
-      aggregateItemStats_(data.results, stats, RISK);
-      cursor = data.nextCursorMark && data.results && data.results.length ? data.nextCursorMark : null;
+      const items = data.results || [];
+
+      let inventoryMap = null;
+      if (inventoryOk && items.length) {
+        try {
+          inventoryMap = fetchInventoryMap_(items.map(function (r) { return (r.item || r).manageNumber; }));
+        } catch (e) {
+          inventoryOk = false;
+          inventoryErrorMessage = e.message;
+        }
+      }
+
+      aggregateItemStats_(items, stats, RISK, inventoryOk ? inventoryMap : null);
+      cursor = data.nextCursorMark && items.length ? data.nextCursorMark : null;
       pages++;
     } while (cursor && pages < 20); // 最大2000商品
 
     lines.push('総商品数: ' + stats.total + '（スキャン' + pages + 'ページ）');
-    lines.push('在庫ゼロ: ' + stats.noStock + '件 / 説明文100字未満: ' + stats.shortDesc + '件 / 画像なし: ' + stats.noImage + '件 / 非公開: ' + stats.hidden + '件');
+    if (inventoryOk) {
+      lines.push('在庫ゼロ: ' + stats.noStock + '件 / 在庫不明: ' + stats.stockUnknown + '件 / 説明文100字未満: ' + stats.shortDesc + '件 / 画像なし: ' + stats.noImage + '件 / 非公開: ' + stats.hidden + '件');
+    } else {
+      lines.push('（在庫API 2.1が利用できないため、在庫状況はすべて「在庫不明」として異常カウントから除外しています。詳細: ' + inventoryErrorMessage + '）');
+      lines.push('在庫不明: ' + stats.stockUnknown + '件（在庫ゼロ件数は判定していません） / 説明文100字未満: ' + stats.shortDesc + '件 / 画像なし: ' + stats.noImage + '件 / 非公開: ' + stats.hidden + '件');
+    }
     lines.push('薬機法リスク語検出: ' + (stats.riskWords.length ? stats.riskWords.join(', ') : 'なし'));
   } catch (e) {
     lines.push('（ItemAPI取得エラー: ' + e.message + '）');
@@ -118,15 +153,45 @@ function collectItems_() {
   return lines.join('\n');
 }
 
-/** 商品ページ1件分の集計を stats に加算（純粋関数。モックデータでテスト可能） */
-function aggregateItemStats_(items, stats, RISK) {
+/**
+ * 在庫API 2.1（仮説: エンドポイント形式は要検証。実仕様が異なる場合はここを調整すること）
+ * manageNumberの配列を渡し、{ manageNumber: 在庫数 } のマップを返す。
+ */
+function fetchInventoryMap_(manageNumbers) {
+  const targets = (manageNumbers || []).filter(Boolean);
+  if (!targets.length) return {};
+  const url = CONF.RMS_BASE + '/es/2.1/inventories/manage-numbers/batch/get';
+  const data = jsonFetch_(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: rmsAuthHeader_() },
+    payload: JSON.stringify({ manageNumbers: targets }),
+  });
+  const map = {};
+  (data.inventories || data.results || []).forEach(function (inv) {
+    const q = inv.mergedQuantity != null ? inv.mergedQuantity : (inv.quantity != null ? inv.quantity : null);
+    map[inv.manageNumber] = q;
+  });
+  return map;
+}
+
+/**
+ * 商品ページ1件分の集計を stats に加算（純粋関数。モックデータでテスト可能）
+ * inventoryMap: { manageNumber: 在庫数 } を渡すと在庫ゼロ判定を行う。
+ * null を渡すと在庫API権限なしとみなし、全件 stockUnknown に計上する（在庫ゼロの誤検知を防止）。
+ */
+function aggregateItemStats_(items, stats, RISK, inventoryMap) {
+  if (stats.stockUnknown == null) stats.stockUnknown = 0;
   (items || []).forEach(function (r) {
     const it = r.item || r;
     stats.total++;
-    const inv = it.variants ? Object.keys(it.variants).some(function (k) {
-      return (it.variants[k].normalDeliveryQuantity || 0) > 0;
-    }) : true;
-    if (!inv) stats.noStock++;
+    if (inventoryMap) {
+      const q = inventoryMap[it.manageNumber];
+      if (q == null) stats.stockUnknown++;
+      else if (q <= 0) stats.noStock++;
+    } else {
+      stats.stockUnknown++;
+    }
     const desc = ((it.productDescription && (it.productDescription.pc || it.productDescription.sp)) || '');
     if (desc.length < 100) stats.shortDesc++;
     if (!(it.images && it.images.length)) stats.noImage++;

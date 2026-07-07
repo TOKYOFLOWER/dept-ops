@@ -122,3 +122,31 @@ test('needs_decision=trueの提案のみ承認キューに登録されLINE WORKS
   assert.equal(approvalRows.length, 1);
   assert.equal(approvalRows[0][4], 'pending');
 });
+
+// ---------- approval_id: 報告に保存される提案と承認キューの行が突き合わせできる（ダッシュボード用） ----------
+test('要承認の提案にはapproval_idが付与され、報告履歴と承認キューの両方に同じIDで記録される', () => {
+  const { sandbox, sheetsData } = ctx([['market', 'マーケティング部', true, '', 'prompt-m']]);
+  sandbox.collectFor_ = () => 'today data';
+  sandbox.sendChatworkReport_ = () => {};
+  sandbox.askClaude_ = () => ({
+    status: 'green', headline: 'H', report: 'R',
+    proposals: [
+      { title: '要承認提案', detail: 'd1', needs_decision: true },
+      { title: '参考提案', detail: 'd2', needs_decision: false },
+    ],
+    needs_decision: true,
+  });
+  sandbox.sendLwApprovalRequest_ = () => {};
+
+  sandbox.runMorningCycle();
+
+  const reportRow = sheetsData['報告履歴'][1];
+  const savedProposals = JSON.parse(reportRow[5]);
+  const needsDecisionProposal = savedProposals.find((p) => p.title === '要承認提案');
+  const infoProposal = savedProposals.find((p) => p.title === '参考提案');
+  assert.ok(needsDecisionProposal.approval_id, '要承認の提案にはapproval_idが付与される');
+  assert.equal(infoProposal.approval_id, undefined, '承認不要の提案にはapproval_idを付与しない');
+
+  const approvalRow = sheetsData['承認キュー'][1];
+  assert.equal(approvalRow[0], needsDecisionProposal.approval_id, '承認キューのidは報告に保存されたapproval_idと一致する');
+});

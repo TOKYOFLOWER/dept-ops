@@ -40,21 +40,36 @@ function runDept_(dept) {
   // 3. Claudeに分析させる
   const result = askClaude_(dept.prompt, todayData, prev, dept.model || null);
 
+  // 3.5 要承認の提案には承認キューIDを事前に付番する（ダッシュボードで承認状態と提案を突き合わせるため）
+  const proposalsWithIds = attachApprovalIds_(result.proposals, dept.id);
+  result.proposals = proposalsWithIds;
+
   // 4. 報告履歴に保存
   sheet_(CONF.SHEET.REPORTS).appendRow([
     new Date(), dept.id, result.status, result.headline, result.report,
-    JSON.stringify(result.proposals),
+    JSON.stringify(proposalsWithIds),
   ]);
 
   // 5. 要承認の提案を承認キュー＋LINE WORKSへ
-  result.proposals.filter(function (p) { return p.needs_decision; }).forEach(function (p) {
-    const id = dept.id + '-' + Utilities.formatDate(new Date(), 'JST', 'yyyyMMddHHmmss') + '-' +
-      Math.floor(Math.random() * 1000);
-    sheet_(CONF.SHEET.APPROVALS).appendRow([id, new Date(), dept.id, JSON.stringify(p), 'pending', '']);
-    try { sendLwApprovalRequest_(id, dept.name, p); } catch (e) { log_('ERROR', 'LW送信失敗: ' + e.message); }
+  proposalsWithIds.filter(function (p) { return p.needs_decision; }).forEach(function (p) {
+    sheet_(CONF.SHEET.APPROVALS).appendRow([p.approval_id, new Date(), dept.id, JSON.stringify(p), 'pending', '']);
+    try { sendLwApprovalRequest_(p.approval_id, dept.name, p); } catch (e) { log_('ERROR', 'LW送信失敗: ' + e.message); }
   });
 
   return result;
+}
+
+/**
+ * needs_decision な提案にだけ承認キューID（approval_id）を付与する。
+ * ダッシュボード側はこのIDで報告中の提案と承認キューの状態（pending/approved/rejected）を突き合わせる。
+ */
+function attachApprovalIds_(proposals, deptId) {
+  return (proposals || []).map(function (p) {
+    if (!p.needs_decision) return p;
+    const id = deptId + '-' + Utilities.formatDate(new Date(), 'JST', 'yyyyMMddHHmmss') + '-' +
+      Math.floor(Math.random() * 1000);
+    return Object.assign({}, p, { approval_id: id });
+  });
 }
 
 function latestReport_(deptId) {
