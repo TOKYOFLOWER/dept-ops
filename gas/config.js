@@ -47,7 +47,12 @@ function rmsAuthHeader_() {
 
 /** HMAC-SHA256 署名（承認リンク用） */
 function hmacSign_(payload) {
-  const sig = Utilities.computeHmacSha256Signature(payload, prop_('HMAC_SECRET'));
+  return hmacSignWithSecret_(payload, prop_('HMAC_SECRET'));
+}
+
+/** シークレットを引数で受け取る版（ユニットテスト用に分離） */
+function hmacSignWithSecret_(payload, secret) {
+  const sig = Utilities.computeHmacSha256Signature(payload, secret);
   return sig.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
 }
 

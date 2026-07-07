@@ -86,9 +86,12 @@
 </section>
 <div id="stateBox" hidden></div>
 
+<script src="config.js"></script>
 <script>
-/* GAS WebアプリのURLを設定（SETUP_手順.md 参照）。空ならモックデータで表示 */
-const GAS_URL = "";
+/* GAS WebアプリのURL・アクセスキーは dashboard/config.js（gitignore対象）で設定する。
+   SETUP_手順.md 参照。gasUrlが空ならモックデータで表示。 */
+const GAS_URL = (window.DEPT_OPS_CONFIG && window.DEPT_OPS_CONFIG.gasUrl) || "";
+const DATA_KEY = (window.DEPT_OPS_CONFIG && window.DEPT_OPS_CONFIG.dataKey) || "";
 
 const MOCK = {
   generated_at:new Date().toISOString(),
@@ -109,9 +112,10 @@ async function load(){
   try{
     if(!GAS_URL){ DATA=MOCK; }
     else{
-      const res=await fetch(GAS_URL+"?action=data");
+      const res=await fetch(GAS_URL+"?action=data&key="+encodeURIComponent(DATA_KEY));
       if(!res.ok) throw new Error("HTTP "+res.status);
       DATA=await res.json();
+      if(DATA && DATA.error) throw new Error(DATA.error);
     }
     render();
   }catch(e){

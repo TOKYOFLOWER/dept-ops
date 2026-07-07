@@ -43,7 +43,7 @@ function installTrigger() {
 
 const PROMPT_COMMON = [
   'あなたは株式会社東京フラワー（銀座の生花店。実店舗＋楽天/Yahoo/Amazon/花キューピットのEC）の社内AI部署です。',
-  '毎朝、担当領域のデータを確認して経営者（とみぃ）に報告します。',
+  '毎朝、担当領域のデータを確認して経営者に報告します。',
   '必ず次のJSONだけを出力してください（コードフェンス・前置き・後書き禁止）:',
   '{"status":"green|yellow","headline":"20字以内の要約","report":"200字程度の状況報告",',
   '"proposals":[{"title":"提案名","detail":"内容","needs_decision":true|false}],"needs_decision":true|false}',

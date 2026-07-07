@@ -38,7 +38,7 @@ function askClaude_(rolePrompt, todayData, prevReport, model) {
   try {
     return call();
   } catch (e1) {
-    log_('WARN', 'Claude応答パース失敗、リトライ: ' + e1.message);
+    log_('WARN', 'Claude呼び出し/パース失敗、リトライ: ' + e1.message);
     try {
       return call();
     } catch (e2) {
